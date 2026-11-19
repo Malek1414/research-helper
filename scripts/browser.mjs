@@ -7,7 +7,7 @@ import { fileURLToPath } from 'node:url';
 
 export const EXT = join(dirname(fileURLToPath(import.meta.url)), '..', 'extension');
 
-function findChrome() {
+export function findChrome() {
   if (process.env.RH_CHROME) return process.env.RH_CHROME;
   const cache = join(homedir(), 'Library/Caches/ms-playwright');
   const dirs = existsSync(cache) ? readdirSync(cache).filter((d) => /^chromium-\d+$/.test(d)).sort().reverse() : [];

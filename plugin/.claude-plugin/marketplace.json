@@ -1,0 +1,12 @@
+{
+  "name": "research-helper",
+  "owner": { "name": "Malek Hassan" },
+  "metadata": { "description": "Research Helper for Claude Code: find the paper worth reading on a topic or by a researcher and open it, explained." },
+  "plugins": [
+    {
+      "name": "research-helper",
+      "source": "./",
+      "description": "/research-helper:read <topic or researcher>: recommend a paper and open it in Research Helper, explained chapter by chapter."
+    }
+  ]
+}

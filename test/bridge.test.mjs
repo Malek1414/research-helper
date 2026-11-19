@@ -104,3 +104,54 @@ test('bridge rejects web origins and bad requests, answers questions, exports', 
     assert.match(readFileSync(out.glossary, 'utf8'), /\*\*Token\*\*: A piece\. _\(My Paper\)_/);
   });
 });
+
+import { request, createServer } from 'node:http';
+
+function raw(port, path, headers = {}) {
+  return new Promise((resolve, reject) => {
+    const req = request({ host: '127.0.0.1', port, path, headers }, (res) => {
+      let body = '';
+      res.on('data', (d) => (body += d));
+      res.on('end', () => resolve({ status: res.statusCode, type: res.headers['content-type'], body }));
+    });
+    req.on('error', reject);
+    req.end();
+  });
+}
+
+test('bridge serves the web app and blocks traversal, foreign hosts and foreign origins', async () => {
+  await withBridge(async ({ base }) => {
+    const port = Number(new URL(base).port);
+    const home = await raw(port, '/');
+    assert.equal(home.status, 200);
+    assert.match(home.type, /text\/html/);
+    assert.match(home.body, /web\/app\.js/);
+    assert.match((await raw(port, '/extension/shared/platform.js')).type, /javascript/);
+    assert.equal((await raw(port, '/extension/%2e%2e/bridge/server.mjs')).status, 404);
+    assert.equal((await raw(port, '/bridge/server.mjs')).status, 404);
+    assert.equal((await raw(port, '/', { host: 'evil.example' })).status, 403);
+    assert.equal((await raw(port, '/health', { origin: 'https://evil.example' })).status, 403);
+    const own = await fetch(`${base}/health`, { headers: { origin: base } });
+    assert.equal(own.status, 200);
+    assert.equal(own.headers.get('access-control-allow-origin'), null);
+  });
+});
+
+test('bridge proxies PDFs for the web app and refuses non-PDFs', async () => {
+  const files = createServer((req, res) => res.end(req.url === '/a.pdf' ? '%PDF-1.7 fake' : '<html>nope</html>'));
+  await new Promise((r) => files.listen(0, '127.0.0.1', r));
+  const src = `http://127.0.0.1:${files.address().port}`;
+  try {
+    await withBridge(async ({ base }) => {
+      const ok = await fetch(`${base}/fetch?url=${encodeURIComponent(`${src}/a.pdf`)}`);
+      assert.equal(ok.status, 200);
+      assert.equal(ok.headers.get('content-type'), 'application/pdf');
+      assert.equal(await ok.text(), '%PDF-1.7 fake');
+      assert.equal((await fetch(`${base}/fetch?url=${encodeURIComponent(`${src}/page`)}`)).status, 415);
+      assert.equal((await fetch(`${base}/fetch?url=file:///etc/passwd`)).status, 400);
+    });
+  } finally {
+    files.closeAllConnections();
+    files.close();
+  }
+});

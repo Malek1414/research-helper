@@ -4,10 +4,35 @@
   "version": "0.1.0",
   "description": "Explains hard PDFs chapter by chapter, with highlights and handwritten notes, through your local Claude Code.",
   "minimum_chrome_version": "140",
-  "permissions": ["sidePanel", "storage", "contextMenus", "tabs", "unlimitedStorage"],
-  "host_permissions": ["<all_urls>"],
-  "background": { "service_worker": "background.js", "type": "module" },
-  "side_panel": { "default_path": "sidepanel/panel.html" },
-  "action": { "default_title": "Research Helper", "default_icon": { "16": "icons/16.png", "48": "icons/48.png", "128": "icons/128.png" } },
-  "icons": { "16": "icons/16.png", "48": "icons/48.png", "128": "icons/128.png" }
+  "permissions": [
+    "sidePanel",
+    "storage",
+    "contextMenus",
+    "tabs",
+    "unlimitedStorage"
+  ],
+  "host_permissions": [
+    "<all_urls>"
+  ],
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+  "side_panel": {
+    "default_path": "sidepanel/panel.html"
+  },
+  "action": {
+    "default_title": "Research Helper",
+    "default_icon": {
+      "16": "icons/16.png",
+      "48": "icons/48.png",
+      "128": "icons/128.png"
+    }
+  },
+  "icons": {
+    "16": "icons/16.png",
+    "48": "icons/48.png",
+    "128": "icons/128.png"
+  },
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAkGftFEJZo/ymAh5JcV0/fQKld3Y6Cdc0n86/3LEcFYR2tis2RFkbY7+RgXl4qRybw+75t/NHWfNTIflJNAq9z2YerHOtsjJnfLhbqDM0GseeZLEDiG6aaUSBtMd9wC67zskTwxKRgGd6CkdoRES3oiH5y9OOxkpZtpO0ZKKYInRJFx4AMuLYQtU3DyxC8G2hd3SeadQ1qS5sMhpW1WODWpvEQfWynHeeUqIYc6q5IksXbIx6ivZahE1PfE+AmS47Hz78RtWlnOuvX+3egIbjG/BfEOf6muNbp3zNZmlE+56REKmtbsmhWkn7rT2w6mEZfJRe4zayfOeLteIwAfXb3wIDAQAB"
 }

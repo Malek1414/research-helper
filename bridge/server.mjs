@@ -1,13 +1,15 @@
 // Local bridge between the extension and Claude Code. Listens on 127.0.0.1 only
 // and only answers the extension (chrome-extension:// origins) or local tools.
+//   GET  /          -> localhost web app (web/index.html, serves extension/ files)
+//   GET  /fetch?url= -> a PDF downloaded for the web app
 //   GET  /health   -> {ok, model}
 //   POST /analyze  -> chapter analysis (cached on disk)
 //   POST /ask      -> {answer}
 //   POST /export   -> {file, glossary}
 import { createServer as createHttpServer } from 'node:http';
 import { createHash } from 'node:crypto';
-import { mkdirSync, readFileSync, writeFileSync, existsSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { mkdirSync, readFileSync, writeFileSync, existsSync, statSync } from 'node:fs';
+import { dirname, extname, join, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { ANALYSIS_SCHEMA, validateAnalysis } from './schema.mjs';
 import { PROMPT_VERSION, analyzePrompt, askPrompt } from './prompts.mjs';
@@ -17,6 +19,12 @@ import { writeExport } from './export.mjs';
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 export const PORT = Number(process.env.RH_PORT || 4317);
 const MAX_BODY = 30 * 1024 * 1024;
+const MAX_PDF = 200 * 1024 * 1024;
+const MIME = {
+  '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.mjs': 'text/javascript; charset=utf-8',
+  '.css': 'text/css; charset=utf-8', '.json': 'application/json', '.png': 'image/png', '.svg': 'image/svg+xml',
+  '.woff2': 'font/woff2', '.gif': 'image/gif', '.bcmap': 'application/octet-stream',
+};
 
 function readBody(req) {
   return new Promise((resolve, reject) => {
@@ -84,20 +92,28 @@ export function createBridge({
   }
 
   const routes = {
-    'GET /health': async () => ({ ok: true, model, version: PROMPT_VERSION }),
+    'GET /health': async () => ({ ok: true, web: true, model, version: PROMPT_VERSION }),
     'POST /analyze': analyze,
     'POST /ask': ask,
     'POST /export': doExport,
   };
 
-  return createHttpServer(async (req, res) => {
+  const server = createHttpServer(async (req, res) => {
+    const port = server.address().port;
+    const own = [`127.0.0.1:${port}`, `localhost:${port}`];
+    // Host check stops DNS-rebinding pages; origin check stops other websites.
+    if (!own.includes(req.headers.host)) {
+      res.writeHead(403).end();
+      return;
+    }
     const origin = req.headers.origin;
-    if (origin && !origin.startsWith('chrome-extension://')) {
+    const ownOrigin = origin && own.some((h) => origin === `http://${h}`);
+    if (origin && !ownOrigin && !origin.startsWith('chrome-extension://')) {
       res.writeHead(403).end();
       return;
     }
     const headers = { 'content-type': 'application/json' };
-    if (origin) {
+    if (origin && !ownOrigin) {
       headers['access-control-allow-origin'] = origin;
       headers['access-control-allow-headers'] = 'content-type';
       headers['access-control-allow-methods'] = 'GET, POST, OPTIONS';
@@ -107,8 +123,11 @@ export function createBridge({
       res.writeHead(204, headers).end();
       return;
     }
-    const route = routes[`${req.method} ${new URL(req.url, 'http://x').pathname}`];
+    const url = new URL(req.url, 'http://x');
+    if (req.method === 'GET' && url.pathname === '/fetch') return proxyPdf(url.searchParams.get('url'), res, headers);
+    const route = routes[`${req.method} ${url.pathname}`];
     if (!route) {
+      if (req.method === 'GET' && serveStatic(url.pathname, res)) return;
       res.writeHead(404, headers).end(JSON.stringify({ error: 'not found' }));
       return;
     }
@@ -121,10 +140,40 @@ export function createBridge({
       res.writeHead(e.status || 500, headers).end(JSON.stringify({ error: e.message }));
     }
   });
+
+  // Downloads a PDF for the web app (pages cannot fetch other sites' files).
+  async function proxyPdf(target, res, headers) {
+    try {
+      if (!/^https?:\/\//i.test(target || '')) throw Object.assign(new Error('url must be http(s)'), { status: 400 });
+      const r = await fetch(target, { redirect: 'follow', signal: AbortSignal.timeout(90000), headers: { 'user-agent': 'ResearchHelper/0.1' } });
+      if (!r.ok) throw Object.assign(new Error(`download failed (${r.status})`), { status: 502 });
+      const buf = Buffer.from(await r.arrayBuffer());
+      if (buf.length > MAX_PDF) throw Object.assign(new Error('PDF too large'), { status: 413 });
+      if (buf.subarray(0, 5).toString('latin1') !== '%PDF-') throw Object.assign(new Error('that link is not a PDF'), { status: 415 });
+      log(`fetched ${target} (${(buf.length / 1e6).toFixed(1)} MB)`);
+      res.writeHead(200, { ...headers, 'content-type': 'application/pdf' }).end(buf);
+    } catch (e) {
+      log(`fetch error: ${e.message}`);
+      res.writeHead(e.status || 502, headers).end(JSON.stringify({ error: e.message }));
+    }
+  }
+
+  // The localhost web app: / is web/index.html; /web/* and /extension/* are files.
+  function serveStatic(pathname, res) {
+    const rel = pathname === '/' ? 'web/index.html' : decodeURIComponent(pathname).replace(/^\/+/, '');
+    if (!/^(web|extension)\//.test(rel)) return false;
+    const file = resolve(ROOT, rel);
+    if (!file.startsWith(join(ROOT, rel.split('/')[0]) + sep) || !existsSync(file) || !statSync(file).isFile()) return false;
+    res.writeHead(200, { 'content-type': MIME[extname(file)] || 'application/octet-stream', 'cache-control': 'no-cache' });
+    res.end(readFileSync(file));
+    return true;
+  }
+
+  return server;
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
   createBridge().listen(PORT, '127.0.0.1', () => {
-    console.log(`Research Helper bridge on http://127.0.0.1:${PORT} (model: ${process.env.RH_MODEL || 'sonnet'})`);
+    console.log(`Research Helper on http://127.0.0.1:${PORT}  (web app + bridge for the extension, model: ${process.env.RH_MODEL || 'sonnet'})`);
   });
 }

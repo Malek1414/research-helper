@@ -1,4 +1,5 @@
 // Side panel: library, progress, rotation, explanations, Q&A, build card, glossary.
+import '../shared/platform.js';
 import { getState, setState, onChange, removeSource } from '../shared/store.js';
 import { getAnalysis } from '../shared/db.js';
 import { progress, nextInRotation } from '../shared/library.js';

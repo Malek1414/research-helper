@@ -3,12 +3,14 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Chrome extension + local Claude bridge that explains hard PDFs chapter by chapter with highlights and handwritten notes.",
+  "description": "Explains hard PDFs chapter by chapter with highlights and handwritten notes: Chrome extension, localhost web app and a Claude Code plugin, powered by your local Claude Code.",
   "scripts": {
     "setup": "node scripts/vendor.mjs",
+    "start": "node bridge/server.mjs",
     "bridge": "node bridge/server.mjs",
     "test": "node --test test/*.test.mjs",
-    "e2e": "node scripts/e2e.mjs"
+    "e2e": "node scripts/e2e.mjs",
+    "e2e:web": "node scripts/e2e-web.mjs"
   },
   "devDependencies": {
     "@fontsource/caveat": "5.3.0",

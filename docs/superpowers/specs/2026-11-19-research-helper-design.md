@@ -44,3 +44,9 @@ Bridge offline: panel shows the start command; reading still works. Quote not fo
 
 ## Out of v1
 OCR, mobile, sync, check questions, auto-commit of exports.
+
+## Addendum (same day): localhost app and Claude Code plugin
+- **Web app**: the bridge serves `web/index.html` at http://127.0.0.1:4317, which embeds the extension's viewer and panel as iframes. `extension/shared/platform.js` replaces chrome.* there (localStorage storage with cross-frame change events, the viewer iframe as the only "tab"). Remote PDFs are downloaded through `GET /fetch?url=`. The bridge now also checks the Host header (DNS rebinding) and accepts its own origin.
+- **Fixed extension ID** via a manifest `key`, plus `import.html?url=&title=&explain=1` so other tools can hand the extension a paper.
+- **Auto-explain**: `explain=1` on the viewer starts the analysis once the chapter renders. Links already in the library are reopened, not re-added. A title passed in is kept over the PDF's metadata title.
+- **Plugin** `plugin/`: skill `read` (`/research-helper:read <topic|researcher|paper> [in chrome]`), `find.mjs` (OpenAlex works/authors with open-access PDFs, ranked by relevance blended with citations; arXiv; retry on 429; optional OPENALEX_API_KEY), `launch.mjs` (verifies the link is a PDF, starts the server detached if needed, prints the URL; `--open` opens it).

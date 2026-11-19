@@ -1,0 +1,8 @@
+{
+  "name": "research-helper",
+  "version": "0.1.0",
+  "description": "/research-helper:read <topic or researcher>: Claude picks the paper worth reading (OpenAlex + arXiv, open-access only), says why, and opens it in Research Helper (localhost app or the Chrome extension) already explaining it, with highlights and handwritten notes.",
+  "author": { "name": "Malek Hassan" },
+  "license": "MIT",
+  "keywords": ["research", "papers", "pdf", "learning", "arxiv"]
+}

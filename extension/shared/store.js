@@ -1,6 +1,7 @@
 // Library state in chrome.storage.local:
 //   sources: [{id, title, url, numPages, chapters:[{title,start,end,done}], chapter, section, mode, addedAt}]
 //   activeId, glossary {key: {term, definition, sources}}, aboutMe
+import './platform.js';
 import { mergeGlossary } from './library.js';
 import { putPdf, deletePdf } from './db.js';
 
@@ -28,11 +29,11 @@ export async function updateSource(id, fn) {
   return next;
 }
 
-export async function addSource({ title, url, bytes }) {
+export async function addSource({ title, url, bytes, titleLocked = false }) {
   const id = crypto.randomUUID();
   await putPdf(id, bytes);
   const { sources } = await getState();
-  const src = { id, title: title || 'Untitled PDF', url: url || '', numPages: 0, chapters: [], chapter: 0, section: 0, mode: 'annotate', addedAt: Date.now() };
+  const src = { id, title: title || 'Untitled PDF', url: url || '', numPages: 0, chapters: [], chapter: 0, section: 0, mode: 'annotate', addedAt: Date.now(), titleLocked };
   await area.set({ sources: [...sources, src], activeId: id });
   return src;
 }

@@ -1,6 +1,12 @@
 # Research Helper
 
-A Chrome extension that reads hard technical PDFs with you. Open a paper or a book. It's split into chapters, and Claude reads one chapter at a time, then:
+Reads hard technical PDFs with you. Three ways in, all sharing the same code:
+
+- **Localhost web app** at http://127.0.0.1:4317: PDF left, explainer right, in any browser tab (`npm start`)
+- **Chrome extension**: its own PDF tab plus Chrome's side panel
+- **Claude Code plugin**: `/research-helper:read <topic or researcher>` picks the paper worth reading and opens it, already explaining
+
+Open a paper or a book. Open a paper or a book. It's split into chapters, and Claude reads one chapter at a time, then:
 
 - **highlights** the sentences that matter (yellow = easy, orange = medium, pink = hard)
 - **scribbles handwritten notes** in a paper margin next to the hard parts
@@ -20,17 +26,39 @@ The AI runs through your own Claude Code login via a small local bridge. You don
 ```bash
 cd ~/Desktop/research-helper
 npm install && npm run setup     # vendors pdf.js, rough.js and the Caveat font into extension/vendor
+claude plugin marketplace add ~/Desktop/research-helper/plugin && claude plugin install research-helper@research-helper
 ```
 
-In Chrome: `chrome://extensions` → turn on **Developer mode** → **Load unpacked** → pick `~/Desktop/research-helper/extension`. Pin the Research Helper icon. Requires Chrome 140 or newer.
+Extension (optional): `chrome://extensions` → **Developer mode** → **Load unpacked** → `~/Desktop/research-helper/extension`. Its ID is fixed (`extension/EXTENSION_ID`) so Claude Code can hand it papers. Chrome 140 or newer.
 
 ## Use
 
 ```bash
-npm run bridge       # keep running while you read (127.0.0.1:4317)
+npm start            # web app + bridge on http://127.0.0.1:4317; keep it running while you read
 ```
 
-Click the toolbar icon to open the side panel, then:
+**From Claude Code** (starts the server itself if needed):
+
+```
+/research-helper:read vector databases
+/research-helper:read papers by Martin Kleppmann
+/research-helper:read the FlashAttention paper in chrome
+/research-helper:read                     # just open the app
+```
+
+Claude searches OpenAlex (citations, open PDFs) and arXiv, picks the one paper that teaches the most for your request, tells you why plus 2-3 alternatives, checks the PDF link, and opens it already explaining. Web app by default; say "in chrome" for the extension. OpenAlex gives a small free daily budget shared per IP address; for your own ($1/day, free) get a key at https://openalex.org/settings/api and `export OPENALEX_API_KEY=...`.
+
+The scripts behind it work on their own too:
+
+```bash
+node plugin/scripts/find.mjs topic "lsm trees" --sort citations
+node plugin/scripts/find.mjs author "Yann LeCun" --topic "self-supervised"
+node plugin/scripts/launch.mjs --url https://arxiv.org/pdf/1706.03762 --title "Attention Is All You Need" --open
+```
+
+**Web app**: open http://127.0.0.1:4317, then **+ Add PDF** or paste a link in the right panel. `/?add=<pdf url>&explain=1` adds and explains a paper in one go. The web app and the extension each keep their own library.
+
+**Extension**: click the toolbar icon to open the side panel, then:
 - **+ Add PDF** for a local file, or paste a link (arXiv etc.)
 - on a tab showing a PDF: **Open this tab's PDF here**
 - or right-click any PDF link → **Open in Research Helper**
@@ -46,7 +74,9 @@ Model: Sonnet by default. For deeper explanations: `RH_MODEL=opus npm run bridge
 | `extension/viewer/` | PDF tab: pdf.js canvas + text layer, highlight layer under the text, rough.js ink layer with handwritten notes in the right margin. Owns the document and calls the bridge. |
 | `extension/sidepanel/` | Library, progress, rotation, walkthrough, Q&A, build card, glossary, export. Talks to the viewer over a `BroadcastChannel`. |
 | `extension/shared/` | `chapters.js` (PDF outline → numbered/"Chapter N" headings → 15-page chunks; PDFs of 25 pages or fewer are one chapter), `anchor.js` (finds Claude's quotes in the text layer despite hyphenation, ligatures, spacing; prefix/suffix fallback), `library.js` (progress, rotation, glossary), storage. |
-| `bridge/` | Node, no dependencies. Runs `claude -p` with no tools, no MCP, no settings/hooks, and a JSON schema for the analysis. Validates and caches results, writes exports. Only answers `chrome-extension://` origins and local processes. |
+| `web/` | The localhost app: viewer and panel as two iframes; `extension/shared/platform.js` stands in for the chrome.* APIs there (storage in localStorage, the viewer iframe as the "tab"). |
+| `plugin/` | Claude Code plugin: `skills/read` (how to choose and open a paper), `scripts/find.mjs` (OpenAlex + arXiv), `scripts/launch.mjs` (PDF check, start server, build URL). |
+| `bridge/` | Node, no dependencies. Also serves the web app and downloads PDFs for it (`/fetch`); checks Host and Origin so other websites cannot use it. Runs `claude -p` with no tools, no MCP, no settings/hooks, and a JSON schema for the analysis. Validates and caches results, writes exports. Only answers `chrome-extension://` origins and local processes. |
 | `library/` | Your exported chapter notes and `glossary.md`. |
 
 Only the current chapter's text goes to Claude, plus 3-sentence summaries of earlier chapters, so books work chapter by chapter.
@@ -55,7 +85,8 @@ Only the current chapter's text goes to Claude, plus 3-sentence summaries of ear
 
 ```bash
 npm test                                   # unit tests: chapters, anchoring, progress/rotation, markdown, bridge
-npm run bridge & npm run e2e -- paper.pdf  # real extension in headless Chrome for Testing, real Claude call, screenshots
+npm start & npm run e2e -- paper.pdf       # real extension in headless Chrome for Testing, real Claude call, screenshots
+npm run e2e:web -- <pdf url>               # the plugin's two launch paths: web app ?add= and extension import page
 node scripts/chapters.mjs book.pdf         # show how a PDF gets split
 ```
 

@@ -1,5 +1,6 @@
 // The PDF tab. Owns the document: splits it into chapters, renders the current
 // chapter, asks the bridge for an analysis, and draws highlights + notes.
+import '../shared/platform.js';
 import * as pdfjsLib from '../vendor/pdf.mjs';
 import { splitChapters, detectHeadings, SMALL_DOC_PAGES } from '../shared/chapters.js';
 import { getSource, updateSource, getState, addGlossary } from '../shared/store.js';
@@ -28,6 +29,7 @@ const state = {
   busy: false,
   section: 0,
   mode: 'annotate',
+  autoExplain: params.get('explain') === '1',
 };
 
 // ---------- status ----------
@@ -96,7 +98,7 @@ async function computeChapters(pdf) {
 }
 
 async function load() {
-  if (!state.id) return showEmpty('No source selected. Open the <b>Research Helper</b> side panel and add a PDF.');
+  if (!state.id) return showEmpty('No source yet. Add a PDF in the <b>Research Helper</b> panel (+ Add PDF, or paste a link).');
   state.source = await getSource(state.id);
   const bytes = state.source && (await getPdf(state.id));
   if (!bytes) return showEmpty('This source is gone from your library. Add it again from the side panel.');
@@ -108,7 +110,7 @@ async function load() {
     const chapters = await computeChapters(state.pdf);
     const firstLoad = !state.source.chapters?.length;
     const metaTitle = String((await state.pdf.getMetadata().catch(() => null))?.info?.Title || '').trim();
-    const useMeta = firstLoad && metaTitle.length >= 4 && metaTitle.length <= 160 && !/^(untitled|microsoft word|document\d*$)/i.test(metaTitle);
+    const useMeta = firstLoad && !state.source.titleLocked && metaTitle.length >= 4 && metaTitle.length <= 160 && !/^(untitled|microsoft word|document\d*$)/i.test(metaTitle);
     state.source = await updateSource(state.id, () => ({ chapters, numPages: state.pdf.numPages, ...(useMeta ? { title: metaTitle } : {}) }));
     document.title = `${state.source.title} · Research Helper`;
     $('title').textContent = state.source.title;
@@ -241,6 +243,10 @@ async function showChapter(index, { section = 0 } = {}) {
   $('explain').disabled = state.noText;
   send(docMessage());
   if (state.analysis && state.section > 0) focusSection(state.section, { scroll: true });
+  if (state.autoExplain && !state.analysis && !state.noText) {
+    state.autoExplain = false;
+    explain();
+  }
 }
 
 function gotoChapter(i) {
