@@ -1,4 +1,4 @@
-// Copies the browser builds of pdf.js, rough.js and the Caveat handwriting font
+// Copies the browser builds of pdf.js, rough.js, the Caveat handwriting font and Inter / Inter Tight
 // into extension/vendor so the unpacked extension has no build step.
 import { cpSync, mkdirSync, rmSync } from 'node:fs';
 import { dirname, join } from 'node:path';
@@ -15,6 +15,8 @@ const files = [
   ['roughjs/bundled/rough.esm.js', 'rough.esm.js'],
   ['@fontsource/caveat/files/caveat-latin-400-normal.woff2', 'caveat-400.woff2'],
   ['@fontsource/caveat/files/caveat-latin-600-normal.woff2', 'caveat-600.woff2'],
+  ['@fontsource-variable/inter/files/inter-latin-wght-normal.woff2', 'inter.woff2'],
+  ['@fontsource-variable/inter-tight/files/inter-tight-latin-wght-normal.woff2', 'inter-tight.woff2'],
 ];
 
 rmSync(out, { recursive: true, force: true });

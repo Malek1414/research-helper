@@ -3,10 +3,10 @@
 import rough from '../vendor/rough.esm.js';
 
 const NS = 'http://www.w3.org/2000/svg';
-const INK = '#26262B';
-const RED = '#C8102E';
-const DIM = '#5B5B63';
-const TONES = ['#FFD95A', '#FFB561', '#FF8FA6', '#8CCBFF', '#9FDC98', '#C9AEFF', '#FFD95A', '#FFB561'];
+const INK = '#1F1D1C';
+const RED = '#CC3B52';
+const DIM = '#6E6B68';
+const TONES = ['#EBA9B4', '#CFC8BE', '#F2C6CD', '#BFB8AE', '#E0909D', '#DDD6CC', '#F5D3D8', '#C8C1B7'];
 
 function el(tag, attrs, parent) {
   const n = document.createElementNS(NS, tag);

@@ -34,7 +34,10 @@ const TRACE_MS = 1700;
 ui.code = { pick: null, trace: null, busy: false, error: '', step: 0, own: '', ownLang: 'auto' };
 
 const active = () => ui.store.sources.find((s) => s.id === ui.store.activeId) || null;
-const diffChip = (n) => `<span class="chip diff" title="Difficulty ${n}/5">${[1, 2, 3, 4, 5].map((k) => `<i class="${k <= n ? 'on' : ''}"></i>`).join('')}</span>`;
+const diffDots = (n) => `<span class="diff" title="Difficulty ${n}/5">${[1, 2, 3, 4, 5].map((k) => `<i class="${k <= n ? 'on' : ''}"></i>`).join('')}</span>`;
+const pad = (n) => String(n).padStart(2, '0');
+// A timeline: a hairline with one dot per item (done = red, current = red ring).
+const track = (items, cur, cls = '') => `<div class="track ${items.length > 24 ? 'many' : ''} ${cls}">${items.map((it, i) => `<span class="${it.done ? 'done' : ''} ${i === cur ? 'cur' : ''} ${it.part ? 'part' : ''}" title="${esc(it.title || '')}"></span>`).join('')}</div>`;
 const secs = (ms) => {
   const t = Math.max(0, Math.round(ms / 1000));
   return t < 60 ? `${t}s` : `${Math.floor(t / 60)}m ${String(t % 60).padStart(2, '0')}s`;
@@ -77,14 +80,16 @@ function render() {
   const analysis = doc?.analysis || (ui.cachedAnalysis?.key === `${src.id}:${chapter}` && ui.cachedAnalysis.analysis) || null;
   const secCount = analysis?.sections.length || 0;
   const secAt = Math.min(doc?.section ?? src.section ?? 0, Math.max(0, secCount - 1));
-  // Like a context-window bar: done chapters are full, the current one fills as you walk its sections.
-  const fill = (c, i) => (c.done ? 100 : i === chapter && secCount ? Math.round(((secAt + 1) / secCount) * 100) : 0);
-  $('src-bar').innerHTML = (src.chapters || []).map((c, i) => `<span class="${c.done ? 'done' : ''} ${i === chapter ? 'cur' : ''}" style="--fill:${fill(c, i)}%" title="${esc(`${i + 1}. ${c.title}`)}"></span>`).join('');
-  $('src-label').textContent = src.chapters?.length ? `${p.pct}% understood` : 'Splitting…';
-  $('src-label').title = `${p.done} of ${p.total} chapters done${secCount ? `, section ${secAt + 1} of ${secCount}` : ''}`;
   const ch = src.chapters?.[chapter];
-  $('ch-no').textContent = ch ? `${chapter + 1}/${src.chapters.length}` : '';
-  $('chapter-summary').textContent = ch ? ch.title : 'Chapters';
+  // One chapter: the timeline shows its sections. Several: one dot per chapter.
+  const many = (src.chapters?.length || 0) > 1;
+  $('src-bar').outerHTML = many
+    ? track(src.chapters.map((c, i) => ({ done: c.done, title: `${i + 1}. ${c.title}`, part: i === chapter && !c.done && secCount })), chapter).replace('class="track', 'id="src-bar" class="track')
+    : track((analysis?.sections || []).map((s, i) => ({ done: ch?.done || i < secAt, title: s.title })), secAt).replace('class="track', 'id="src-bar" class="track');
+  $('src-label').textContent = !src.chapters?.length ? 'Splitting into chapters'
+    : `${p.pct}% understood${secCount ? ` · section ${secAt + 1} of ${secCount}` : ''}`;
+  $('ch-no').textContent = ch ? `Chapter ${chapter + 1} of ${src.chapters.length} · pages ${ch.start + 1}–${ch.end + 1}` : '';
+  $('chapter-summary').textContent = ch ? ch.title : '';
   const preparing = new Set(doc?.prefetching || []);
   $('chapters').hidden = !ui.chaptersOpen;
   $('chapters').innerHTML = (src.chapters || []).map((c, i) => `
@@ -111,7 +116,7 @@ function render() {
   if (ui.tab === 'code') renderCode(src, doc, analysis);
 }
 
-// Live progress while Claude works: reading, writing section N, drawing pictures.
+// Live progress while Claude works, told like a slide: a lead-in, one big number, a hairline.
 function renderProgress(doc, analysis, view) {
   const pr = doc?.progress;
   const drawing = view === 'visual' && doc?.visualBusy;
@@ -120,15 +125,21 @@ function renderProgress(doc, analysis, view) {
   clearInterval(ui.clock);
   if (!show) return;
   const total = analysis?.sections.length || 0;
-  let text;
   let fill = null;
-  if (pr.phase === 'reading') text = 'Claude is reading the chapter';
-  else if (pr.phase === 'writing') text = `Writing section ${pr.sections + 1}<span class="dim"> · ${pr.sections} ready</span>`;
-  else {
-    text = `Drawing pictures · ${pr.drawn} of ${total}`;
-    fill = total ? Math.max(4, Math.round((pr.drawn / total) * 100)) : 0;
+  if (pr.phase === 'reading') {
+    $('progress-text').textContent = 'Claude is reading the chapter.';
+    $('progress-big').textContent = '';
+    $('progress-unit').textContent = 'First section in a few seconds';
+  } else if (pr.phase === 'writing') {
+    $('progress-text').textContent = `Writing section ${pr.sections + 1}.`;
+    $('progress-big').textContent = pr.sections;
+    $('progress-unit').textContent = pr.sections === 1 ? 'section ready' : 'sections ready';
+  } else {
+    $('progress-text').textContent = 'Drawing the pictures.';
+    $('progress-big').textContent = `${pr.drawn}/${total}`;
+    $('progress-unit').textContent = 'drawn';
+    fill = total ? Math.max(3, Math.round((pr.drawn / total) * 100)) : 0;
   }
-  $('progress-text').innerHTML = text;
   $('progress').classList.toggle('indeterminate', fill === null);
   $('progress-fill').style.width = fill === null ? '' : `${fill}%`;
   const tick = () => ($('progress-time').textContent = secs(Date.now() - pr.startedAt));
@@ -136,17 +147,20 @@ function renderProgress(doc, analysis, view) {
   ui.clock = setInterval(tick, 1000);
 }
 
+const skeleton = (label) => `<article class="sec skeleton">${label ? `<p class="q"><span class="dot-spin"></span>${label}</p>` : ''}<div class="bar t"></div><div class="bar s"></div><div class="bar xs"></div></article>`;
+
 function renderWalk(src, chapter, a, doc, mode, visuals) {
   const box = $('tab-walk');
   if (!a) {
     const ch = src.chapters?.[chapter];
     box.innerHTML = doc?.busy
-      ? [0, 1, 2].map((k) => `<article class="card skeleton">${k === 0 ? '<div class="label"><span class="spinner"></span>Reading the chapter. The first section shows up in a few seconds.</div>' : ''}<div class="bar t"></div><div class="bar s"></div><div class="bar xs"></div></article>`).join('')
+      ? skeleton('Reading the chapter.') + skeleton() + skeleton()
       : `<div class="cta">
-          <h3>${ch ? esc(ch.title) : 'This chapter'}</h3>
-          <p>${ch ? `Pages ${ch.start + 1} to ${ch.end + 1}. ` : ''}Claude reads only this chapter, highlights what matters and draws each idea.</p>
+          <p class="q">${ch ? `${ch.end - ch.start + 1} pages, not explained yet.` : 'Not explained yet.'}</p>
+          <h2>Claude reads this chapter and draws every idea.</h2>
+          <p class="sub">Highlights land on the PDF. Sections appear one by one as they are written.</p>
           <button id="explain-cta" class="primary">Explain this chapter</button>
-          <p class="fine">Sections appear one by one as they are written.</p>
+          <p class="pill">First section in about 10 seconds</p>
         </div>`;
     return;
   }
@@ -160,26 +174,24 @@ function renderWalk(src, chapter, a, doc, mode, visuals) {
     const key = `${src.id}:${chapter}:${i}`;
     const anchored = doc?.anchored ? doc.anchored[i] : true;
     const qa = (ui.answers[key] || []).map((x) => `
-      <div class="qa"><div class="q">${esc(x.question)}</div>
-      <div class="body">${x.pending ? '<span class="status busy">Thinking…</span>' : x.error ? `<span class="status error">${esc(x.error)}</span>` : renderMarkdown(x.answer)}</div></div>`).join('');
-    const askBox = i === cur ? `<div class="ask"><form data-ask="${i}"><input name="q" placeholder="Ask about this part…" autocomplete="off"><button class="small">Ask</button></form>${qa}</div>` : '';
+      <div class="qa"><p class="q">${esc(x.question)}</p>
+      <div class="body">${x.pending ? '<span class="status busy">Thinking</span>' : x.error ? `<span class="status error">${esc(x.error)}</span>` : renderMarkdown(x.answer)}</div></div>`).join('');
+    const askBox = i === cur ? `<div class="ask"><form data-ask="${i}"><input name="q" placeholder="Ask about this part" autocomplete="off"><button class="link">Ask</button></form>${qa}</div>` : '';
     const v = visuals?.sections?.[i];
-    const head = `
-        <h4><span><span class="n">${i + 1}</span>${esc(s.title)}</span></h4>
-        <div class="meta"><span class="chip page" data-page-sec="${i}" title="Show it on the PDF">p. ${s.page}</span>${diffChip(s.difficulty)}${anchored ? '' : '<span class="chip warn">no highlight found</span>'}${visual && !v && doc?.visualBusy ? '<span class="chip drawing">drawing…</span>' : ''}</div>`;
-    const fresh = i >= seen ? 'fresh' : '';
+    const meta = `<div class="sec-meta pill"><span class="num">${pad(i + 1)}</span><span class="page-link" data-page-sec="${i}" title="Show it on the PDF">p. ${s.page}</span>${diffDots(s.difficulty)}${anchored ? '' : '<span class="warn">no highlight</span>'}${visual && !v && (doc?.visualBusy || doc?.busy) ? '<span class="drawing">drawing</span>' : ''}</div>`;
+    const cls = `sec ${i === cur ? 'on' : ''} ${i >= seen ? 'fresh' : ''}`;
     if (v) {
       return `
-      <article class="card visual ${i === cur ? 'on' : ''} ${fresh}" data-section="${i}">
-        ${head}
-        ${v.oneLiner ? `<p class="one">${esc(v.oneLiner)}</p>` : ''}
+      <article class="${cls}" data-section="${i}">
+        ${meta}
+        <div class="sec-head"><p class="q">${esc(s.title)}</p><h2>${esc(v.oneLiner || s.title)}</h2></div>
         <div class="wb" data-wb="${i}"></div>
         <div class="wb-cap" data-cap="${i}"></div>
         <div class="wb-ctl">
-          <button class="small" data-wb-prev="${i}" title="Previous step">‹</button>
+          <button class="link" data-wb-prev="${i}" title="Previous step">‹</button>
           <span class="wb-dots" data-dots="${i}"></span>
-          <button class="small" data-wb-next="${i}" title="Next step">›</button>
-          <button class="small play" data-wb-play="${i}">▶ Play</button>
+          <button class="link" data-wb-next="${i}" title="Next step">›</button>
+          <button class="link play" data-wb-play="${i}">Play</button>
         </div>
         ${s.note ? `<div class="note-hand">${esc(s.note)}</div>` : ''}
         <details class="more" data-more="${key}" ${ui.openMore.has(key) ? 'open' : ''}><summary>Full explanation</summary><div class="body">${renderMarkdown(s.explanation)}</div></details>
@@ -187,8 +199,9 @@ function renderWalk(src, chapter, a, doc, mode, visuals) {
       </article>`;
     }
     return `
-      <article class="card ${i === cur ? 'on' : ''} ${fresh}" data-section="${i}">
-        ${head}
+      <article class="${cls} text" data-section="${i}">
+        ${meta}
+        <div class="sec-head"><h2>${esc(s.title)}</h2></div>
         ${s.note ? `<div class="note-hand">${esc(s.note)}</div>` : ''}
         <div class="body">${renderMarkdown(s.explanation)}</div>
         ${askBox}
@@ -199,18 +212,18 @@ function renderWalk(src, chapter, a, doc, mode, visuals) {
     // Annotate all: map open on top. Guided walk: the section comes first, the map folds below it.
     const mapOpen = mode === 'walk' ? ui.openMore.has('map:open') : !ui.openMore.has('map:closed');
     if (visuals?.map) mapHtml = `<details class="map-box" data-more="${mode === 'walk' ? 'map-walk' : 'map'}" ${mapOpen ? 'open' : ''}><summary>Chapter map</summary><div class="wb" id="wb-map"></div><p class="hint">Tap an idea to jump to it.</p></details>`;
-    else if (doc?.visualError) mapHtml = `<p class="status error">Could not draw this chapter: ${esc(doc.visualError)} <button id="draw-again" class="small">Try again</button></p>`;
-    else if (!visuals && !doc?.visualBusy && !doc?.busy) mapHtml = '<p class="status">No pictures yet. <button id="draw-again" class="small">Draw this chapter</button></p>';
+    else if (doc?.visualError) mapHtml = `<p class="status error">Could not draw this chapter: ${esc(doc.visualError)} <button id="draw-again" class="link red">Try again</button></p>`;
+    else if (!visuals && !doc?.visualBusy && !doc?.busy) mapHtml = '<p class="status">No pictures yet. <button id="draw-again" class="link red">Draw this chapter</button></p>';
   }
-  const writing = partial ? `<article class="card skeleton"><div class="label"><span class="spinner"></span>Writing section ${a.sections.length + 1}…</div><div class="bar t"></div><div class="bar s"></div><div class="bar xs"></div></article>` : '';
+  const writing = partial ? skeleton(`Writing section ${a.sections.length + 1}.`) : '';
   if (mode === 'walk') {
     const last = cur === a.sections.length - 1;
     box.innerHTML = `
       <div class="walk-nav">
-        <button id="w-back" class="small" ${cur === 0 ? 'disabled' : ''}>‹ Back</button>
-        <span class="walk-dots">${a.sections.map((_, k) => `<i class="${k <= cur ? 'on' : ''}"></i>`).join('')}</span>
-        <span>${cur + 1}/${a.sections.length}${partial ? '+' : ''}</span>
-        ${last && partial ? '<button class="small" disabled>Writing…</button>' : last ? '<button id="w-finish" class="small primary">Finish ✓</button>' : '<button id="w-next" class="small primary">Next ›</button>'}
+        <button id="w-back" class="link" ${cur === 0 ? 'disabled' : ''}>‹ Back</button>
+        ${track(a.sections.map((x, k) => ({ done: k < cur, title: x.title })), cur)}
+        <span class="count">${pad(cur + 1)} / ${pad(a.sections.length)}${partial ? '+' : ''}</span>
+        ${last && partial ? '<button class="primary walk-next" disabled>Writing</button>' : last ? '<button id="w-finish" class="primary walk-next">Finish</button>' : '<button id="w-next" class="primary walk-next">Next</button>'}
       </div>
       ${card(a.sections[cur], cur)}
       ${mapHtml}`;
@@ -237,7 +250,7 @@ function drawCard(i, { animate = false } = {}) {
   const dotsEl = document.querySelector(`[data-dots="${i}"]`);
   if (dotsEl) dotsEl.innerHTML = v.steps.map((_, k) => `<i class="${k <= st.step ? 'on' : ''}" data-wb-go="${i}:${k}" title="Step ${k + 1}"></i>`).join('');
   const playBtn = document.querySelector(`[data-wb-play="${i}"]`);
-  if (playBtn) playBtn.textContent = ui.timer && ui.playing === key ? '❚❚ Pause' : st.step === v.steps.length - 1 ? '↺ Replay' : '▶ Play';
+  if (playBtn) playBtn.textContent = ui.timer && ui.playing === key ? 'Pause' : st.step === v.steps.length - 1 ? 'Replay' : 'Play';
 }
 
 function stopPlay() {
@@ -297,25 +310,25 @@ function hydrateWhiteboards(src, chapter, visuals, cur) {
 function renderBuild(a, ch) {
   const box = $('tab-build');
   if (!a) {
-    box.innerHTML = '<p class="status">The build card appears once the chapter is explained.</p>';
+    box.innerHTML = '<div class="cta"><p class="q">Nothing to build yet.</p><h2>The build card appears once the chapter is explained.</h2></div>';
     return;
   }
   const b = a.buildCard;
   if (!b) {
-    box.innerHTML = '<article class="card skeleton"><div class="label"><span class="spinner"></span>The build card is written after the sections.</div><div class="bar t"></div><div class="bar s"></div><div class="bar s"></div><div class="bar xs"></div></article>';
+    box.innerHTML = skeleton('The build card is written after the sections.');
     return;
   }
   box.innerHTML = `
     <div class="build">
-      <h5>Core idea</h5><div class="core">${renderMarkdown(b.coreIdea)}</div>
-      <h5>Where it fits in a product</h5><ul class="fits">${b.whereItFits.map((w) => `<li>${renderMarkdown(w).replace(/^<p>|<\/p>$/g, '')}</li>`).join('')}</ul>
-      ${b.sketch ? `<h5>Sketch · ${esc(b.sketchLang)}</h5><pre><code>${esc(b.sketch)}</code></pre><div class="sketch-actions"><button id="step-sketch" class="small primary">▶ Step through it</button><button id="copy-sketch" class="small">Copy</button></div>` : ''}
-      <h5>In short</h5><div class="body">${renderMarkdown(a.summary)}</div>
+      <p class="pill">Core idea</p><div class="core">${renderMarkdown(b.coreIdea)}</div>
+      <p class="pill">Where it fits in a product</p><ul class="fits">${b.whereItFits.map((w) => `<li><span>${renderMarkdown(w).replace(/^<p>|<\/p>$/g, '')}</span></li>`).join('')}</ul>
+      ${b.sketch ? `<p class="pill">Sketch · ${esc(b.sketchLang)}</p><pre><code>${esc(b.sketch)}</code></pre><div class="sketch-actions"><button id="step-sketch" class="link red">Step through it</button><button id="copy-sketch" class="link">Copy</button></div>` : ''}
+      <p class="pill">In short</p><div class="summary">${renderMarkdown(a.summary)}</div>
       <div class="actions">
         <button id="export" class="primary">Export to Neurotree</button>
-        <button id="toggle-done">${ch?.done ? 'Mark not done' : 'Mark chapter done'}</button>
+        <button id="toggle-done" class="link">${ch?.done ? 'Mark not done' : 'Mark chapter done'}</button>
+        <div id="export-status" class="status"></div>
       </div>
-      <div id="export-status" class="status"></div>
     </div>`;
 }
 
@@ -334,11 +347,11 @@ function renderCode(src, doc, analysis) {
     }
     const fromChapter = !doc
       ? '<p class="status">Open the PDF to look for code in it.</p>'
-      : doc.listingsBusy ? '<p class="status busy">Looking for code and pseudo-code in this chapter…</p>'
-      : doc.listingsError ? `<p class="status error">${esc(doc.listingsError)} <button id="find-code" class="small">Try again</button></p>`
+      : doc.listingsBusy ? '<p class="status busy">Looking for code and pseudo-code in this chapter</p>'
+      : doc.listingsError ? `<p class="status error">${esc(doc.listingsError)} <button id="find-code" class="link red">Try again</button></p>`
       : listings?.length ? `<ul class="code-pick">${listings.map((l, i) => `<li><button data-pick="listing:${i}"><span>${esc(l.title)}</span><span class="lang">${esc(l.language)} · p. ${l.page}</span></button></li>`).join('')}</ul>`
       : listings ? '<p class="status">No code in this chapter. Try the build card sketch or paste your own.</p>'
-      : '<p class="status"><button id="find-code" class="small">Find code in this chapter</button></p>';
+      : '<p class="status"><button id="find-code" class="link red">Find code in this chapter</button></p>';
     const sketch = analysis?.buildCard?.sketch
       ? `<ul class="code-pick"><li><button data-pick="sketch"><span>Build card sketch</span><span class="lang">${esc(analysis.buildCard.sketchLang)}</span></button></li></ul>`
       : '<p class="status">Explain the chapter to get a build card sketch.</p>';
@@ -349,21 +362,21 @@ function renderCode(src, doc, analysis) {
       return;
     }
     box.innerHTML = `
-      <p class="status">Step through code line by line: what runs, what every variable holds, and why, in plain words. Any language.</p>
-      <h5>From this chapter</h5><div id="code-chapter">${fromChapter}</div>
-      <h5>Build card</h5><div id="code-sketch">${sketch}</div>
-      <h5>Your own code</h5>
-      <textarea id="own-code" placeholder="Paste any code: Python, TypeScript, SQL, Go, Rust, pseudo-code…" spellcheck="false">${esc(c.own)}</textarea>
+      <div class="code-intro"><p class="q">Any language, line by line.</p><h2>See what every line does and what every variable holds.</h2></div>
+      <p class="pill">From this chapter</p><div id="code-chapter">${fromChapter}</div>
+      <p class="pill">Build card</p><div id="code-sketch">${sketch}</div>
+      <p class="pill">Your own code</p>
+      <textarea id="own-code" placeholder="Paste any code: Python, TypeScript, SQL, Go, Rust, pseudo-code" spellcheck="false">${esc(c.own)}</textarea>
       <div class="own-row"><select id="own-lang">${LANGS.map((l) => `<option ${l === c.ownLang ? 'selected' : ''}>${l}</option>`).join('')}</select><button id="trace-own" class="primary">Visualize</button></div>`;
     return;
   }
-  const head = `<div class="tv-head"><button id="code-back" class="small">‹ All code</button><span class="tv-title">${esc(c.pick.title)}</span></div>`;
+  const head = `<div class="tv-head"><span class="tv-title">${esc(c.pick.title)}</span><button id="code-back" class="link">‹ All code</button></div>`;
   if (c.busy) {
-    box.innerHTML = `${head}<p class="status busy">Claude is tracing it line by line… (about 30-90 s)</p><pre class="tv-out">${esc(c.pick.code)}</pre>`;
+    box.innerHTML = `${head}<p class="status busy">Claude is tracing it line by line. About 30–90 s.</p><pre class="tv-out">${esc(c.pick.code)}</pre>`;
     return;
   }
   if (c.error || !c.trace) {
-    box.innerHTML = `${head}<p class="status error">${esc(c.error || 'No trace')} <button id="trace-retry" class="small">Try again</button></p>`;
+    box.innerHTML = `${head}<p class="status error">${esc(c.error || 'No trace')} <button id="trace-retry" class="link red">Try again</button></p>`;
     return;
   }
   const t = c.trace;
@@ -372,15 +385,15 @@ function renderCode(src, doc, analysis) {
     <div class="tv-code" id="tv-code"></div>
     <div class="tv-explain" id="tv-explain"></div>
     <div class="tv-ctl">
-      <button id="tv-prev" class="small" title="Previous step (←)">‹</button>
-      <button id="tv-play" class="small">▶</button>
-      <button id="tv-next" class="small" title="Next step (→)">›</button>
+      <button id="tv-prev" class="link" title="Previous step (←)">‹</button>
+      <button id="tv-play" class="link">Play</button>
+      <button id="tv-next" class="link" title="Next step (→)">›</button>
       <input id="tv-range" type="range" min="0" max="${t.steps.length - 1}" value="${c.step}">
       <span class="count" id="tv-count"></span>
     </div>
     <div id="tv-state"></div>
     ${t.added ? '<p class="status">Faded lines at the end were added as an example run.</p>' : ''}
-    <button id="trace-retry" class="small">Trace again</button>`;
+    <button id="trace-retry" class="link">Trace again</button>`;
   drawTraceStep();
 }
 
@@ -396,7 +409,7 @@ function drawTraceStep() {
   $('tv-state').innerHTML = stateHtml(t, i);
   $('tv-range').value = i;
   $('tv-count').textContent = `step ${i + 1}/${t.steps.length} · line ${s.line}`;
-  $('tv-play').textContent = ui.code.timer ? '❚❚' : i === t.steps.length - 1 ? '↺' : '▶';
+  $('tv-play').textContent = ui.code.timer ? 'Pause' : i === t.steps.length - 1 ? 'Replay' : 'Play';
   const cur = $('tv-code').querySelector('.ln.cur');
   if (cur) {
     const box = $('tv-code');
@@ -462,8 +475,8 @@ function renderGlossary(a) {
   const hits = filter ? all.filter((g) => (g.term + ' ' + g.definition).toLowerCase().includes(filter)) : all;
   const dl = (items, src) => `<dl>${items.map((g) => `<dt>${esc(g.term)}</dt><dd>${esc(g.definition)}${src && g.sources ? ` <span class="src">· ${esc(g.sources.join(', '))}</span>` : ''}</dd>`).join('')}</dl>`;
   $('gloss-list').innerHTML =
-    (a && !filter ? `<h5>This chapter (${a.glossary.length})</h5>${dl(a.glossary, false)}` : '') +
-    `<h5>${filter ? 'Matches' : 'All sources'} (${hits.length})</h5>${dl(hits, true)}`;
+    (a && !filter ? `<p class="pill">This chapter · ${a.glossary.length}</p>${dl(a.glossary, false)}` : '') +
+    `<p class="pill">${filter ? 'Matches' : 'Everything you have read'} · ${hits.length}</p>${dl(hits, true)}`;
 }
 
 function renderLibrary() {
@@ -472,7 +485,7 @@ function renderLibrary() {
     return `<li data-src="${s.id}" class="${s.id === ui.store.activeId ? 'on' : ''}">
       <div class="s-row"><span class="s-title">${esc(s.title)}</span>
         <span><span class="s-pct">${p.total ? `${p.pct}%` : '…'}</span>
-        <button class="rm" data-rm="${s.id}" title="Remove">${ui.removing === s.id ? 'remove?' : '✕'}</button></span></div>
+        <button class="rm" data-rm="${s.id}" title="Remove">${ui.removing === s.id ? 'sure?' : 'remove'}</button></span></div>
       <div class="mini">${(s.chapters || []).map((c) => `<span class="${c.done ? 'done' : ''}"></span>`).join('')}</div>
     </li>`;
   }).join('');
@@ -528,7 +541,7 @@ listen('panel', (m) => {
     case 'focus':
       if (ui.doc) ui.doc.section = m.section;
       render();
-      document.querySelector('.card.on')?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+      document.querySelector('.sec.on')?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
       break;
     case 'answer': {
       const key = `${m.sourceId}:${ui.doc?.chapter}:${m.section}`;
@@ -637,7 +650,7 @@ document.addEventListener('click', async (e) => {
     ui.tab = tabBtn.dataset.tab;
     return render();
   }
-  const cardEl = t.closest('.card[data-section]');
+  const cardEl = t.closest('.sec[data-section]');
   if (cardEl && !t.closest('form') && !t.closest('a')) {
     const si = Number(cardEl.dataset.section);
     if (si !== (ui.doc?.section ?? -1)) gotoSection(si);

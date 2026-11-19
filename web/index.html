@@ -6,15 +6,15 @@
   <title>Research Helper</title>
   <link rel="icon" href="/extension/icons/48.png">
   <style>
-    :root { --bg: #0B0B0C; --line: #222226; --red: #CC3B52; --muted: #8A8A92; }
+    :root { --bg: #0B0B0C; --line: #2C2C30; --red: #CC3B52; --muted: #8A8A92; }
     html, body { margin: 0; height: 100%; background: var(--bg); overflow: hidden; }
     .split { display: flex; height: 100vh; }
-    #viewer { flex: 1; min-width: 0; border: 0; height: 100%; background: #161618; }
-    #handle { width: 6px; cursor: col-resize; background: var(--line); flex: none; }
+    #viewer { flex: 1; min-width: 0; border: 0; height: 100%; background: #0B0B0C; }
+    #handle { width: 1px; padding: 0 3px; background-clip: content-box; cursor: col-resize; background: var(--line); flex: none; }
     #handle:hover, #handle.drag { background: var(--red); }
     #panel { width: var(--panel-w, 440px); flex: none; border: 0; height: 100%; background: var(--bg); }
     .split.dragging iframe { pointer-events: none; }
-    #error { position: fixed; left: 50%; top: 70px; transform: translateX(-50%); background: #1A0E11; border: 1px solid #5C1E29; color: #FF8A9A; font: 13px system-ui, sans-serif; padding: 10px 14px; border-radius: 8px; z-index: 9; }
+    #error { position: fixed; left: 50%; top: 70px; transform: translateX(-50%); background: #1A0E11; border: 1px solid #5C1E29; color: #FF8A9A; font: 13px system-ui, sans-serif; padding: 10px 14px; z-index: 9; }
     @media (max-width: 860px) { .split { flex-direction: column; } #handle { display: none; } #panel { width: 100%; height: 50vh; } #viewer { height: 50vh; } }
   </style>
 </head>
