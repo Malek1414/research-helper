@@ -23,6 +23,8 @@ Open a paper or a book. It's split into chapters, and Claude reads one chapter a
 
 Pictures arrive about a minute after the words and are cached like them. Claude only describes the picture as data (boxes, arrows, steps); the app draws it, so nothing Claude writes runs as code.
 
+**Code tab: a code visualizer** for any language. Pick code found in the chapter (listings, pseudo-code, algorithm boxes), the build card's sketch (**▶ Step through it** on the build card), or paste your own. Claude traces it like a debugger: the running line is marked, a handwritten line says what it does and why, and every variable is drawn by kind (values, lists as indexed boxes, matrices as grids, dicts and objects as key → value rows, SQL as intermediate tables), grouped by function, with changes flagged **new**, plus the output so far. ‹ › or ←/→ to step, space or ▶ to play, a slider to scrub. Long loops run two rounds then fast-forward; code that only defines functions gets a small example call (faded). SQL steps through clauses in execution order. Values come from Claude's trace, not from running the code, so treat them like a careful tutor's whiteboard.
+
 Two modes: **Annotate all** (the whole chapter marked up at once; click a highlight to see its explanation) and **Guided walk** (section by section; the PDF scrolls to each one and the handwriting animates in. `→`/`←` work in the PDF tab).
 
 Several sources sit in the **library**, each with a segmented progress bar like Claude's context bar: done chapters are full, and the current one fills as you walk its sections. **↻ Rotate** jumps to the next unfinished chapter of the next source, so you can interleave a paper with a book.
@@ -93,7 +95,7 @@ Only the current chapter's text goes to Claude, plus 3-sentence summaries of ear
 ## Tests
 
 ```bash
-npm test                                   # unit tests: chapters, anchoring, progress/rotation, markdown, bridge, visuals
+npm test                                   # unit tests: chapters, anchoring, progress/rotation, markdown, bridge, visuals, code traces
 npm start & npm run e2e -- paper.pdf       # real extension in headless Chrome for Testing, real Claude call, screenshots
 npm run e2e:web -- <pdf url>               # the plugin's two launch paths: web app ?add= and extension import page
 node scripts/chapters.mjs book.pdf         # show how a PDF gets split

@@ -33,4 +33,6 @@ export const deletePdf = (id) => tx('pdfs', 'readwrite', (s) => s.delete(id));
 export const putAnalysis = (id, chapter, a) => tx('analyses', 'readwrite', (s) => s.put(a, `${id}:${chapter}`));
 export const getAnalysis = (id, chapter) => tx('analyses', 'readonly', (s) => s.get(`${id}:${chapter}`));
 export const putVisuals = (id, chapter, v) => tx('analyses', 'readwrite', (s) => s.put(v, `${id}:${chapter}:visuals`));
+export const putListings = (id, chapter, v) => tx('analyses', 'readwrite', (s) => s.put(v, `${id}:${chapter}:listings`));
+export const getListings = (id, chapter) => tx('analyses', 'readonly', (s) => s.get(`${id}:${chapter}:listings`));
 export const getVisuals = (id, chapter) => tx('analyses', 'readonly', (s) => s.get(`${id}:${chapter}:visuals`));

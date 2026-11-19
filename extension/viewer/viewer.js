@@ -4,7 +4,7 @@ import '../shared/platform.js';
 import * as pdfjsLib from '../vendor/pdf.mjs';
 import { splitChapters, detectHeadings, SMALL_DOC_PAGES } from '../shared/chapters.js';
 import { getSource, updateSource, getState, addGlossary } from '../shared/store.js';
-import { getPdf, getAnalysis, putAnalysis, getVisuals, putVisuals } from '../shared/db.js';
+import { getPdf, getAnalysis, putAnalysis, getVisuals, putVisuals, getListings, putListings } from '../shared/db.js';
 import * as bridge from '../shared/bridge.js';
 import { send, listen } from '../shared/bus.js';
 import { textNodes, anchorRects, drawHighlight, drawNote } from './annotate.js';
@@ -25,6 +25,9 @@ const state = {
   visuals: null, // {map, sections[]} drawn by the panel in Visual mode
   visualBusy: false,
   visualError: '',
+  listings: null, // [{title, language, page, code}] code found in the chapter
+  listingsBusy: false,
+  listingsError: '',
   anchors: [], // per section: [{page, rects}] in the current layout
   pages: new Map(), // page index -> {wrap, pageEl, hlSvg, inkSvg, nodes, text, width, height}
   zoom: 1,
@@ -48,6 +51,7 @@ function docMessage() {
     to: 'panel', type: 'doc', sourceId: s.id, title: s.title, chapters: s.chapters, chapter: state.chapter,
     analysis: state.analysis, anchored: state.anchors.map((a) => a.length > 0), section: state.section, mode: state.mode, busy: state.busy,
     visuals: state.visuals, visualBusy: state.visualBusy, visualError: state.visualError,
+    listings: state.listings, listingsBusy: state.listingsBusy, listingsError: state.listingsError,
   };
 }
 
@@ -239,6 +243,8 @@ async function showChapter(index, { section = 0 } = {}) {
   state.analysis = (await getAnalysis(state.id, index)) || null;
   state.visuals = (state.analysis && (await getVisuals(state.id, index))) || null;
   state.visualError = '';
+  state.listings = (await getListings(state.id, index))?.listings || null;
+  state.listingsError = '';
   state.section = Math.min(section, (state.analysis?.sections.length || 1) - 1);
   await updateSource(state.id, () => ({ chapter: index, section: state.section }));
   const chars = [...state.pages.values()].reduce((n, p) => n + p.text.trim().length, 0);
@@ -407,6 +413,27 @@ async function visualize({ force = false } = {}) {
   }
 }
 
+// Finds code listings / pseudo-code in the current chapter for the Code tab.
+async function findListings({ force = false } = {}) {
+  if (state.listingsBusy || state.noText) return;
+  const chapter = state.chapter;
+  const ch = state.source.chapters[chapter];
+  state.listingsBusy = true;
+  state.listingsError = '';
+  send(docMessage());
+  try {
+    const res = await bridge.listings({ text: chapterText(ch), pageRange: [ch.start + 1, ch.end + 1], chapterTitle: ch.title, force });
+    delete res.cached;
+    await putListings(state.id, chapter, res);
+    if (chapter === state.chapter) state.listings = res.listings;
+  } catch (e) {
+    if (chapter === state.chapter) state.listingsError = e.message;
+  } finally {
+    state.listingsBusy = false;
+    send(docMessage());
+  }
+}
+
 async function ask({ question, section }) {
   const s = state.analysis?.sections[section];
   const page = s ? s.page - 1 : state.source.chapters[state.chapter].start;
@@ -458,6 +485,7 @@ listen('viewer', async (m) => {
     case 'open': if (Number.isInteger(m.chapter) && m.chapter !== state.chapter) gotoChapter(m.chapter); break;
     case 'explain': explain({ force: !!m.force }); break;
     case 'visualize': visualize({ force: !!m.force }); break;
+    case 'listings': findListings({ force: !!m.force }); break;
     case 'focus': focusSection(m.section, { scroll: true }); break;
     case 'mode':
       state.mode = m.mode;

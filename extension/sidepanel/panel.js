@@ -4,6 +4,7 @@ import { getState, setState, onChange, removeSource } from '../shared/store.js';
 import { getAnalysis, getVisuals } from '../shared/db.js';
 import { layoutVisual, layoutMap } from '../shared/visual-layout.js';
 import { drawWhiteboard } from './whiteboard.js';
+import { codeHtml, stateHtml } from '../shared/trace-view.js';
 import { progress, nextInRotation } from '../shared/library.js';
 import { renderMarkdown, escapeHtml as esc } from '../shared/md.js';
 import { send, listen } from '../shared/bus.js';
@@ -24,6 +25,9 @@ const ui = {
   openMore: new Set(), // "Full explanation" boxes left open
 };
 const STEP_MS = 3400;
+const TRACE_MS = 1700;
+// Code tab: pick = {title, code, language} being traced; traces cached per code.
+ui.code = { pick: null, trace: null, busy: false, error: '', step: 0, own: '', ownLang: 'auto' };
 
 const active = () => ui.store.sources.find((s) => s.id === ui.store.activeId) || null;
 const dots = (n) => '●'.repeat(n) + '○'.repeat(5 - n);
@@ -84,10 +88,11 @@ function render() {
   const visuals = doc ? doc.visuals : (ui.cachedVisuals?.key === `${src.id}:${chapter}` && ui.cachedVisuals.visuals) || null;
   $('view-hint').textContent = view === 'visual' && analysis ? (doc?.visualBusy ? 'Drawing the pictures…' : visuals ? 'Pictures first, words on demand' : '') : '';
   for (const b of document.querySelectorAll('.tabs button')) b.classList.toggle('on', b.dataset.tab === ui.tab);
-  for (const t of ['walk', 'build', 'gloss']) $(`tab-${t}`).hidden = ui.tab !== t;
+  for (const t of ['walk', 'build', 'code', 'gloss']) $(`tab-${t}`).hidden = ui.tab !== t;
   renderWalk(src, chapter, analysis, doc, mode, view === 'visual' ? visuals : null);
   renderBuild(analysis, ch);
   renderGlossary(analysis);
+  if (ui.tab === 'code') renderCode(src, doc, analysis);
 }
 
 function renderWalk(src, chapter, a, doc, mode, visuals) {
@@ -247,7 +252,7 @@ function renderBuild(a, ch) {
     <div class="build">
       <h5>Core idea</h5><div class="core">${renderMarkdown(b.coreIdea)}</div>
       <h5>Where it fits in a product</h5><div class="body"><ul>${b.whereItFits.map((w) => `<li>${renderMarkdown(w).replace(/^<p>|<\/p>$/g, '')}</li>`).join('')}</ul></div>
-      ${b.sketch ? `<h5>Sketch · ${esc(b.sketchLang)}</h5><pre><code>${esc(b.sketch)}</code></pre><button id="copy-sketch" class="small">Copy sketch</button>` : ''}
+      ${b.sketch ? `<h5>Sketch · ${esc(b.sketchLang)}</h5><pre><code>${esc(b.sketch)}</code></pre><button id="copy-sketch" class="small">Copy sketch</button> <button id="step-sketch" class="small primary">▶ Step through it</button>` : ''}
       <h5>In short</h5><div class="body">${renderMarkdown(a.summary)}</div>
       <div class="actions">
         <button id="export" class="primary">Export to Neurotree</button>
@@ -255,6 +260,143 @@ function renderBuild(a, ch) {
       </div>
       <div id="export-status" class="status"></div>
     </div>`;
+}
+
+// ---------- code visualizer ----------
+const LANGS = ['auto', 'python', 'typescript', 'javascript', 'sql', 'go', 'rust', 'java', 'c++', 'c#', 'bash', 'pseudocode'];
+
+function renderCode(src, doc, analysis) {
+  const box = $('tab-code');
+  const c = ui.code;
+  if (!c.pick) {
+    const listings = doc?.listings;
+    // Look for code in the chapter the first time the tab opens.
+    if (doc && !listings && !doc.listingsBusy && !doc.listingsError && !c.asked?.has(`${src.id}:${doc.chapter}`)) {
+      (c.asked ||= new Set()).add(`${src.id}:${doc.chapter}`);
+      command({ cmd: 'listings' });
+    }
+    const fromChapter = !doc
+      ? '<p class="status">Open the PDF to look for code in it.</p>'
+      : doc.listingsBusy ? '<p class="status busy">Looking for code and pseudo-code in this chapter…</p>'
+      : doc.listingsError ? `<p class="status error">${esc(doc.listingsError)} <button id="find-code" class="small">Try again</button></p>`
+      : listings?.length ? `<ul class="code-pick">${listings.map((l, i) => `<li><button data-pick="listing:${i}"><span>${esc(l.title)}</span><span class="lang">${esc(l.language)} · p. ${l.page}</span></button></li>`).join('')}</ul>`
+      : listings ? '<p class="status">No code in this chapter. Try the build card sketch or paste your own.</p>'
+      : '<p class="status"><button id="find-code" class="small">Find code in this chapter</button></p>';
+    const sketch = analysis?.buildCard?.sketch
+      ? `<ul class="code-pick"><li><button data-pick="sketch"><span>Build card sketch</span><span class="lang">${esc(analysis.buildCard.sketchLang)}</span></button></li></ul>`
+      : '<p class="status">Explain the chapter to get a build card sketch.</p>';
+    // Keep the paste box (and what is typed in it) when only the lists change.
+    if ($('own-code') && $('code-chapter')) {
+      $('code-chapter').innerHTML = fromChapter;
+      $('code-sketch').innerHTML = sketch;
+      return;
+    }
+    box.innerHTML = `
+      <p class="status">Step through code line by line: what runs, what every variable holds, and why, in plain words. Any language.</p>
+      <h5>From this chapter</h5><div id="code-chapter">${fromChapter}</div>
+      <h5>Build card</h5><div id="code-sketch">${sketch}</div>
+      <h5>Your own code</h5>
+      <textarea id="own-code" placeholder="Paste any code: Python, TypeScript, SQL, Go, Rust, pseudo-code…" spellcheck="false">${esc(c.own)}</textarea>
+      <div class="own-row"><select id="own-lang">${LANGS.map((l) => `<option ${l === c.ownLang ? 'selected' : ''}>${l}</option>`).join('')}</select><button id="trace-own" class="primary">Visualize</button></div>`;
+    return;
+  }
+  const head = `<div class="tv-head"><button id="code-back" class="small">‹ All code</button><span class="tv-title">${esc(c.pick.title)}</span></div>`;
+  if (c.busy) {
+    box.innerHTML = `${head}<p class="status busy">Claude is tracing it line by line… (about 30-90 s)</p><pre class="tv-out">${esc(c.pick.code)}</pre>`;
+    return;
+  }
+  if (c.error || !c.trace) {
+    box.innerHTML = `${head}<p class="status error">${esc(c.error || 'No trace')} <button id="trace-retry" class="small">Try again</button></p>`;
+    return;
+  }
+  const t = c.trace;
+  box.innerHTML = `${head}
+    ${t.summary ? `<p class="tv-summary">${esc(t.summary)}</p>` : ''}
+    <div class="tv-code" id="tv-code"></div>
+    <div class="tv-explain" id="tv-explain"></div>
+    <div class="tv-ctl">
+      <button id="tv-prev" class="small" title="Previous step (←)">‹</button>
+      <button id="tv-play" class="small">▶</button>
+      <button id="tv-next" class="small" title="Next step (→)">›</button>
+      <input id="tv-range" type="range" min="0" max="${t.steps.length - 1}" value="${c.step}">
+      <span class="count" id="tv-count"></span>
+    </div>
+    <div id="tv-state"></div>
+    ${t.added ? '<p class="status">Faded lines at the end were added as an example run.</p>' : ''}
+    <button id="trace-retry" class="small">Trace again</button>`;
+  drawTraceStep();
+}
+
+const EVENTS = { call: 'enter function', return: 'return', skip: 'fast-forward', error: 'error', line: '' };
+
+function drawTraceStep() {
+  const t = ui.code.trace;
+  if (!t || !$('tv-code')) return;
+  const i = (ui.code.step = Math.max(0, Math.min(ui.code.step, t.steps.length - 1)));
+  const s = t.steps[i];
+  $('tv-code').innerHTML = codeHtml(t, i);
+  $('tv-explain').innerHTML = `${EVENTS[s.event] ? `<span class="ev">${EVENTS[s.event]}</span>` : ''}${esc(s.explain)}`;
+  $('tv-state').innerHTML = stateHtml(t, i);
+  $('tv-range').value = i;
+  $('tv-count').textContent = `step ${i + 1}/${t.steps.length} · line ${s.line}`;
+  $('tv-play').textContent = ui.code.timer ? '❚❚' : i === t.steps.length - 1 ? '↺' : '▶';
+  const cur = $('tv-code').querySelector('.ln.cur');
+  if (cur) {
+    const box = $('tv-code');
+    const top = cur.offsetTop - box.offsetTop;
+    if (top < box.scrollTop + 20 || top > box.scrollTop + box.clientHeight - 40) box.scrollTop = Math.max(0, top - box.clientHeight / 3);
+  }
+}
+
+function traceStep(delta) {
+  stopTracePlay();
+  ui.code.step += delta;
+  drawTraceStep();
+}
+
+function stopTracePlay() {
+  clearInterval(ui.code.timer);
+  ui.code.timer = null;
+}
+
+function toggleTracePlay() {
+  const t = ui.code.trace;
+  if (!t) return;
+  if (ui.code.timer) {
+    stopTracePlay();
+    return drawTraceStep();
+  }
+  if (ui.code.step >= t.steps.length - 1) ui.code.step = 0;
+  ui.code.timer = setInterval(() => {
+    ui.code.step += 1;
+    if (ui.code.step >= t.steps.length - 1) stopTracePlay();
+    drawTraceStep();
+  }, TRACE_MS);
+  drawTraceStep();
+}
+
+async function runTrace(pick, { force = false } = {}) {
+  stopTracePlay();
+  Object.assign(ui.code, { pick, trace: null, busy: true, error: '', step: 0 });
+  ui.tab = 'code';
+  render();
+  const src = active();
+  const ch = src?.chapters?.[ui.doc?.chapter ?? src.chapter];
+  try {
+    const res = await bridge.trace({
+      code: pick.code, language: pick.language, title: pick.title, force,
+      context: src ? `"${src.title}"${ch ? `, chapter "${ch.title}"` : ''}` : '', aboutMe: ui.store.aboutMe,
+    });
+    if (ui.code.pick !== pick) return;
+    ui.code.trace = res;
+  } catch (e) {
+    if (ui.code.pick === pick) ui.code.error = e.message;
+  } finally {
+    if (ui.code.pick === pick) {
+      ui.code.busy = false;
+      render();
+    }
+  }
 }
 
 function renderGlossary(a) {
@@ -425,7 +567,42 @@ document.addEventListener('click', async (e) => {
     return;
   }
 
-  switch (t.id) {
+  const pickBtn = t.closest('[data-pick]');
+  if (pickBtn) {
+    const [kind, idx] = pickBtn.dataset.pick.split(':');
+    const a = ui.doc?.analysis || ui.cachedAnalysis?.analysis;
+    if (kind === 'sketch' && a) return runTrace({ title: 'Build card sketch', code: a.buildCard.sketch, language: a.buildCard.sketchLang });
+    const l = ui.doc?.listings?.[Number(idx)];
+    if (l) return runTrace({ title: l.title, code: l.code, language: l.language });
+    return;
+  }
+  switch (t.closest('button')?.id || t.id) {
+    case 'step-sketch': {
+      const a = ui.doc?.analysis || ui.cachedAnalysis?.analysis;
+      if (a?.buildCard.sketch) runTrace({ title: 'Build card sketch', code: a.buildCard.sketch, language: a.buildCard.sketchLang });
+      return;
+    }
+    case 'find-code':
+      return command({ cmd: 'listings', force: true });
+    case 'trace-own': {
+      const code = $('own-code').value;
+      if (!code.trim()) return;
+      ui.code.own = code;
+      ui.code.ownLang = $('own-lang').value;
+      return runTrace({ title: 'Your code', code, language: ui.code.ownLang === 'auto' ? '' : ui.code.ownLang });
+    }
+    case 'trace-retry':
+      return ui.code.pick && runTrace(ui.code.pick, { force: !!ui.code.trace });
+    case 'code-back':
+      stopTracePlay();
+      ui.code.pick = null;
+      return render();
+    case 'tv-prev':
+      return traceStep(-1);
+    case 'tv-next':
+      return traceStep(1);
+    case 'tv-play':
+      return toggleTracePlay();
     case 'draw-again':
       return command({ cmd: 'visualize', force: true });
     case 'explain':
@@ -517,6 +694,23 @@ document.addEventListener('toggle', (e) => {
   if (on) ui.openMore.add(key);
   else ui.openMore.delete(key);
 }, true);
+document.addEventListener('input', (e) => {
+  if (e.target.id === 'tv-range') {
+    stopTracePlay();
+    ui.code.step = Number(e.target.value);
+    drawTraceStep();
+  } else if (e.target.id === 'own-code') ui.code.own = e.target.value;
+});
+document.addEventListener('keydown', (e) => {
+  if (ui.tab !== 'code' || !ui.code.trace || /^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName)) return;
+  if (e.key === 'ArrowRight') traceStep(1);
+  else if (e.key === 'ArrowLeft') traceStep(-1);
+  else if (e.key === ' ') {
+    e.preventDefault();
+    toggleTracePlay();
+  } else return;
+  e.preventDefault();
+});
 $('gloss-filter').addEventListener('input', () => renderGlossary(ui.doc?.analysis || ui.cachedAnalysis?.analysis));
 chrome.tabs.onActivated.addListener(checkThisTab);
 chrome.tabs.onUpdated.addListener((_, info) => info.url && checkThisTab());

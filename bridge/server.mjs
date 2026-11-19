@@ -5,6 +5,8 @@
 //   GET  /health   -> {ok, model}
 //   POST /analyze  -> chapter analysis (cached on disk)
 //   POST /visualize -> whiteboard visuals + concept map for an analysed chapter (cached)
+//   POST /trace    -> step-by-step trace of a piece of code (cached)
+//   POST /listings -> code / pseudo-code found in a chapter (cached)
 //   POST /ask      -> {answer}
 //   POST /export   -> {file, glossary}
 import { createServer as createHttpServer } from 'node:http';
@@ -19,6 +21,7 @@ import { PROMPT_VERSION, analyzePrompt, askPrompt } from './prompts.mjs';
 import { runClaude } from './claude.mjs';
 import { VISUAL_SCHEMA, VISUAL_VERSION, validateVisuals, visualPrompt } from './visual.mjs';
 import { DEFAULT_ABOUT_ME } from './prompts.mjs';
+import { LISTINGS_SCHEMA, TRACE_SCHEMA, TRACE_VERSION, listingsPrompt, tracePrompt, validateListings, validateTrace } from './trace.mjs';
 import { writeExport } from './export.mjs';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
@@ -117,6 +120,40 @@ export function createBridge({
     return job;
   }
 
+  // Disk-cached, de-duplicated Claude job.
+  function cachedJob(prefix, keyParts, force, label, work) {
+    const key = prefix + createHash('sha256').update(JSON.stringify({ model, ...keyParts })).digest('hex').slice(0, 31);
+    const file = join(cacheDir, `${key}.json`);
+    if (!force && existsSync(file)) return Promise.resolve({ ...JSON.parse(readFileSync(file, 'utf8')), cached: true });
+    if (inflight.has(key)) return inflight.get(key);
+    const job = (async () => {
+      const t0 = Date.now();
+      log(label);
+      const out = await work();
+      writeFileSync(file, JSON.stringify(out));
+      log(`${label.split(' ')[0]} done in ${((Date.now() - t0) / 1000).toFixed(0)}s`);
+      return { ...out, cached: false };
+    })().finally(() => inflight.delete(key));
+    inflight.set(key, job);
+    return job;
+  }
+
+  async function trace(body) {
+    const code = String(body.code || '').replace(/\s+$/, '');
+    if (!code.trim()) throw Object.assign(new Error('code is required'), { status: 400 });
+    if (code.length > 12000) throw Object.assign(new Error('code too long to trace (keep it under ~200 lines)'), { status: 413 });
+    const aboutMe = body.aboutMe || DEFAULT_ABOUT_ME;
+    return cachedJob('t', { v: TRACE_VERSION, code, language: body.language || '', aboutMe }, body.force, `trace ${body.language || 'code'} "${body.title || ''}" (${code.split('\n').length} lines, ${model})`, async () =>
+      validateTrace(await run({ prompt: tracePrompt({ aboutMe, code, language: body.language, title: body.title, context: body.context }), schema: TRACE_SCHEMA, model }), code));
+  }
+
+  async function listings(body) {
+    const { text, pageRange } = body;
+    if (!text || !Array.isArray(pageRange)) throw Object.assign(new Error('text and pageRange are required'), { status: 400 });
+    return cachedJob('l', { v: TRACE_VERSION, text }, body.force, `listings "${body.chapterTitle || ''}" (${text.length} chars, ${model})`, async () =>
+      validateListings(await run({ prompt: listingsPrompt({ text, pageRange }), schema: LISTINGS_SCHEMA, model }), pageRange));
+  }
+
   async function ask(body) {
     if (!body.question) throw Object.assign(new Error('question is required'), { status: 400 });
     log(`ask: ${body.question.slice(0, 80)}`);
@@ -134,6 +171,8 @@ export function createBridge({
     'GET /health': async () => ({ ok: true, web: true, model, version: PROMPT_VERSION }),
     'POST /analyze': analyze,
     'POST /visualize': visualize,
+    'POST /trace': trace,
+    'POST /listings': listings,
     'POST /ask': ask,
     'POST /export': doExport,
   };

@@ -17,5 +17,7 @@ async function call(path, body) {
 export const health = () => call('/health').then(() => true, () => false);
 export const analyze = (body) => call('/analyze', body);
 export const visualize = (body) => call('/visualize', body);
+export const trace = (body) => call('/trace', body);
+export const listings = (body) => call('/listings', body);
 export const ask = (body) => call('/ask', body);
 export const exportChapter = (body) => call('/export', body);
