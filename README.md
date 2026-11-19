@@ -6,11 +6,11 @@ Reads hard technical PDFs with you. Three ways in, all sharing the same code:
 - **Chrome extension**: its own PDF tab plus Chrome's side panel
 - **Claude Code plugin**: `/research-helper:read <topic or researcher>` picks the paper worth reading and opens it, already explaining
 
-Open a paper or a book. Open a paper or a book. It's split into chapters, and Claude reads one chapter at a time, then:
+Open a paper or a book. It's split into chapters, and Claude reads one chapter at a time, then:
 
 - **highlights** the sentences that matter (yellow = easy, orange = medium, pink = hard)
 - **scribbles handwritten notes** in a paper margin next to the hard parts
-- **explains every section in plain words** in Chrome's side panel, pitched at you (editable "About me")
+- **explains every section in plain words** beside the PDF, pitched at you (editable "About me")
 - answers **questions** about the passage you're on
 - ends each chapter with a **build card** (core idea, where it fits in a product, a code sketch) and a **glossary** that grows across all your sources
 - **exports** chapter notes as Markdown to `library/`, which [Neurotree](../Neurotree) indexes
@@ -65,7 +65,7 @@ node plugin/scripts/launch.mjs --url https://arxiv.org/pdf/1706.03762 --title "A
 
 Press **Explain chapter**. A chapter takes about 1-2 minutes the first time; after that it's cached (`.cache/analyses`). For Chrome's own split view, put the Research Helper tab next to anything else you're working in. The explainer lives in the side panel either way.
 
-Model: Sonnet by default. For deeper explanations: `RH_MODEL=opus npm run bridge`.
+Model: Sonnet by default. For deeper explanations: `RH_MODEL=opus npm start`.
 
 ## How it works
 
@@ -76,7 +76,7 @@ Model: Sonnet by default. For deeper explanations: `RH_MODEL=opus npm run bridge
 | `extension/shared/` | `chapters.js` (PDF outline → numbered/"Chapter N" headings → 15-page chunks; PDFs of 25 pages or fewer are one chapter), `anchor.js` (finds Claude's quotes in the text layer despite hyphenation, ligatures, spacing; prefix/suffix fallback), `library.js` (progress, rotation, glossary), storage. |
 | `web/` | The localhost app: viewer and panel as two iframes; `extension/shared/platform.js` stands in for the chrome.* APIs there (storage in localStorage, the viewer iframe as the "tab"). |
 | `plugin/` | Claude Code plugin: `skills/read` (how to choose and open a paper), `scripts/find.mjs` (OpenAlex + arXiv), `scripts/launch.mjs` (PDF check, start server, build URL). |
-| `bridge/` | Node, no dependencies. Also serves the web app and downloads PDFs for it (`/fetch`); checks Host and Origin so other websites cannot use it. Runs `claude -p` with no tools, no MCP, no settings/hooks, and a JSON schema for the analysis. Validates and caches results, writes exports. Only answers `chrome-extension://` origins and local processes. |
+| `bridge/` | Node, no dependencies. Also serves the web app and downloads PDFs for it (`/fetch`); checks Host and Origin so other websites cannot use it. Runs `claude -p` with no tools, no MCP, no settings/hooks, and a JSON schema for the analysis. Validates and caches results, writes exports. Answers only the web app's own origin, `chrome-extension://` origins and local processes. |
 | `library/` | Your exported chapter notes and `glossary.md`. |
 
 Only the current chapter's text goes to Claude, plus 3-sentence summaries of earlier chapters, so books work chapter by chapter.
