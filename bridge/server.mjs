@@ -8,6 +8,8 @@
 //   POST /export   -> {file, glossary}
 import { createServer as createHttpServer } from 'node:http';
 import { createHash } from 'node:crypto';
+import { lookup } from 'node:dns/promises';
+import { isIP } from 'node:net';
 import { mkdirSync, readFileSync, writeFileSync, existsSync, statSync } from 'node:fs';
 import { dirname, extname, join, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -25,6 +27,18 @@ const MIME = {
   '.css': 'text/css; charset=utf-8', '.json': 'application/json', '.png': 'image/png', '.svg': 'image/svg+xml',
   '.woff2': 'font/woff2', '.gif': 'image/gif', '.bcmap': 'application/octet-stream',
 };
+
+// True for loopback, private, link-local, CGNAT, multicast and other non-public addresses.
+export function isPrivateAddress(addr) {
+  let a = addr.toLowerCase();
+  if (a.startsWith('::ffff:')) a = a.slice(7);
+  if (isIP(a) === 4) {
+    const [x, y] = a.split('.').map(Number);
+    return x === 0 || x === 10 || x === 127 || x >= 224 || (x === 100 && y >= 64 && y <= 127) ||
+      (x === 169 && y === 254) || (x === 172 && y >= 16 && y <= 31) || (x === 192 && y === 168) || (x === 198 && (y === 18 || y === 19));
+  }
+  return a === '::' || a === '::1' || /^f[cd]/.test(a) || /^fe[89ab]/.test(a) || a.startsWith('ff');
+}
 
 function readBody(req) {
   return new Promise((resolve, reject) => {
@@ -54,6 +68,7 @@ export function createBridge({
   libraryDir = join(ROOT, 'library'),
   model = process.env.RH_MODEL || 'sonnet',
   log = (...a) => console.log(new Date().toISOString().slice(11, 19), ...a),
+  allowPrivateFetch = false, // tests only
 } = {}) {
   mkdirSync(cacheDir, { recursive: true });
   const inflight = new Map();
@@ -144,8 +159,7 @@ export function createBridge({
   // Downloads a PDF for the web app (pages cannot fetch other sites' files).
   async function proxyPdf(target, res, headers) {
     try {
-      if (!/^https?:\/\//i.test(target || '')) throw Object.assign(new Error('url must be http(s)'), { status: 400 });
-      const r = await fetch(target, { redirect: 'follow', signal: AbortSignal.timeout(90000), headers: { 'user-agent': 'ResearchHelper/0.1' } });
+      const r = await safeFetch(target);
       if (!r.ok) throw Object.assign(new Error(`download failed (${r.status})`), { status: 502 });
       const buf = Buffer.from(await r.arrayBuffer());
       if (buf.length > MAX_PDF) throw Object.assign(new Error('PDF too large'), { status: 413 });
@@ -156,6 +170,30 @@ export function createBridge({
       log(`fetch error: ${e.message}`);
       res.writeHead(e.status || 502, headers).end(JSON.stringify({ error: e.message }));
     }
+  }
+
+  // Fetches a public http(s) URL only: every hop (redirects included) must resolve
+  // to public addresses, so the proxy cannot be pointed at this Mac or the local network.
+  async function safeFetch(target, hops = 5) {
+    let url;
+    try {
+      url = new URL(target);
+    } catch {
+      throw Object.assign(new Error('invalid url'), { status: 400 });
+    }
+    if (!/^https?:$/.test(url.protocol)) throw Object.assign(new Error('url must be http(s)'), { status: 400 });
+    if (!allowPrivateFetch) {
+      const host = url.hostname.replace(/^\[|\]$/g, '');
+      const addrs = isIP(host) ? [{ address: host }] : await lookup(host, { all: true }).catch(() => []);
+      if (!addrs.length) throw Object.assign(new Error('host not found'), { status: 502 });
+      if (addrs.some((x) => isPrivateAddress(x.address))) throw Object.assign(new Error('refusing to fetch a private or local address'), { status: 403 });
+    }
+    const r = await fetch(url, { redirect: 'manual', signal: AbortSignal.timeout(90000), headers: { 'user-agent': 'ResearchHelper/0.1' } });
+    if (r.status >= 300 && r.status < 400 && r.headers.get('location')) {
+      if (hops <= 0) throw Object.assign(new Error('too many redirects'), { status: 502 });
+      return safeFetch(new URL(r.headers.get('location'), url).href, hops - 1);
+    }
+    return r;
   }
 
   // The localhost web app: / is web/index.html; /web/* and /extension/* are files.

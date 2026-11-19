@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { createBridge } from '../bridge/server.mjs';
+import { createBridge, isPrivateAddress } from '../bridge/server.mjs';
 import { validateAnalysis } from '../bridge/schema.mjs';
 import { chapterMarkdown, slug } from '../bridge/export.mjs';
 import { claudeArgs } from '../bridge/claude.mjs';
@@ -54,12 +54,12 @@ test('claude args disable tools, MCP and settings', () => {
   assert.equal(args[args.indexOf('--setting-sources') + 1], '');
 });
 
-async function withBridge(fn) {
+async function withBridge(fn, opts = {}) {
   let calls = 0;
   const dir = mkdtempSync(join(tmpdir(), 'rh-test-'));
   const server = createBridge({
     run: async ({ schema }) => { calls++; await new Promise((r) => setTimeout(r, 30)); return schema ? RAW : 'An answer.'; },
-    cacheDir: join(dir, 'cache'), libraryDir: join(dir, 'library'), log: () => {},
+    cacheDir: join(dir, 'cache'), libraryDir: join(dir, 'library'), log: () => {}, ...opts,
   });
   await new Promise((r) => server.listen(0, '127.0.0.1', r));
   const base = `http://127.0.0.1:${server.address().port}`;
@@ -149,9 +149,19 @@ test('bridge proxies PDFs for the web app and refuses non-PDFs', async () => {
       assert.equal(await ok.text(), '%PDF-1.7 fake');
       assert.equal((await fetch(`${base}/fetch?url=${encodeURIComponent(`${src}/page`)}`)).status, 415);
       assert.equal((await fetch(`${base}/fetch?url=file:///etc/passwd`)).status, 400);
-    });
+    }, { allowPrivateFetch: true });
   } finally {
     files.closeAllConnections();
     files.close();
   }
+});
+
+test('pdf proxy refuses local and private addresses by default', async () => {
+  await withBridge(async ({ base }) => {
+    for (const u of ['http://127.0.0.1:22/x.pdf', 'http://localhost/x.pdf', 'http://192.168.18.199/x.pdf', 'http://[::1]/x.pdf', 'http://169.254.169.254/latest']) {
+      assert.equal((await fetch(`${base}/fetch?url=${encodeURIComponent(u)}`)).status, 403, u);
+    }
+  });
+  for (const a of ['10.0.0.1', '172.20.1.1', '100.64.0.1', '::ffff:127.0.0.1', 'fd00::1', 'fe80::1', '0.0.0.0']) assert.ok(isPrivateAddress(a), a);
+  for (const a of ['151.101.1.1', '8.8.8.8', '2606:4700::1111', '172.32.0.1']) assert.ok(!isPrivateAddress(a), a);
 });
