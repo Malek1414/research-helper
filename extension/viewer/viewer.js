@@ -4,7 +4,7 @@ import '../shared/platform.js';
 import * as pdfjsLib from '../vendor/pdf.mjs';
 import { splitChapters, detectHeadings, SMALL_DOC_PAGES } from '../shared/chapters.js';
 import { getSource, updateSource, getState, addGlossary } from '../shared/store.js';
-import { getPdf, getAnalysis, putAnalysis } from '../shared/db.js';
+import { getPdf, getAnalysis, putAnalysis, getVisuals, putVisuals } from '../shared/db.js';
 import * as bridge from '../shared/bridge.js';
 import { send, listen } from '../shared/bus.js';
 import { textNodes, anchorRects, drawHighlight, drawNote } from './annotate.js';
@@ -22,6 +22,9 @@ const state = {
   pdf: null,
   chapter: 0,
   analysis: null,
+  visuals: null, // {map, sections[]} drawn by the panel in Visual mode
+  visualBusy: false,
+  visualError: '',
   anchors: [], // per section: [{page, rects}] in the current layout
   pages: new Map(), // page index -> {wrap, pageEl, hlSvg, inkSvg, nodes, text, width, height}
   zoom: 1,
@@ -44,6 +47,7 @@ function docMessage() {
   return {
     to: 'panel', type: 'doc', sourceId: s.id, title: s.title, chapters: s.chapters, chapter: state.chapter,
     analysis: state.analysis, anchored: state.anchors.map((a) => a.length > 0), section: state.section, mode: state.mode, busy: state.busy,
+    visuals: state.visuals, visualBusy: state.visualBusy, visualError: state.visualError,
   };
 }
 
@@ -233,6 +237,8 @@ async function showChapter(index, { section = 0 } = {}) {
 
   await document.fonts.load('600 20px Caveat');
   state.analysis = (await getAnalysis(state.id, index)) || null;
+  state.visuals = (state.analysis && (await getVisuals(state.id, index))) || null;
+  state.visualError = '';
   state.section = Math.min(section, (state.analysis?.sections.length || 1) - 1);
   await updateSource(state.id, () => ({ chapter: index, section: state.section }));
   const chars = [...state.pages.values()].reduce((n, p) => n + p.text.trim().length, 0);
@@ -246,7 +252,7 @@ async function showChapter(index, { section = 0 } = {}) {
   if (state.autoExplain && !state.analysis && !state.noText) {
     state.autoExplain = false;
     explain();
-  }
+  } else if (state.analysis && !state.visuals && (await getState()).view === 'visual') visualize();
 }
 
 function gotoChapter(i) {
@@ -365,11 +371,38 @@ async function explain({ force = false } = {}) {
     status(`${res.sections.length} sections explained${missing ? `, ${missing} without a highlight` : ''}`);
     $('explain').textContent = 'Re-explain';
     if (state.mode === 'walk') focusSection(0);
+    state.visuals = null;
+    visualize({ force });
   } catch (e) {
     status(e.message, 'error');
   } finally {
     state.busy = false;
     $('explain').disabled = false;
+    send(docMessage());
+  }
+}
+
+// Asks the bridge for the whiteboard drawings + concept map of the current chapter.
+async function visualize({ force = false } = {}) {
+  if (state.visualBusy || !state.analysis) return;
+  const chapter = state.chapter;
+  const ch = state.source.chapters[chapter];
+  state.visualBusy = true;
+  state.visualError = '';
+  send(docMessage());
+  try {
+    const { aboutMe } = await getState();
+    const res = await bridge.visualize({
+      sourceTitle: state.source.title, chapterTitle: ch.title, text: chapterText(ch), aboutMe, force,
+      sections: state.analysis.sections.map(({ title, page, explanation }) => ({ title, page, explanation })),
+    });
+    delete res.cached;
+    await putVisuals(state.id, chapter, res);
+    if (chapter === state.chapter) state.visuals = res;
+  } catch (e) {
+    if (chapter === state.chapter) state.visualError = e.message;
+  } finally {
+    state.visualBusy = false;
     send(docMessage());
   }
 }
@@ -424,6 +457,7 @@ listen('viewer', async (m) => {
   switch (m.cmd) {
     case 'open': if (Number.isInteger(m.chapter) && m.chapter !== state.chapter) gotoChapter(m.chapter); break;
     case 'explain': explain({ force: !!m.force }); break;
+    case 'visualize': visualize({ force: !!m.force }); break;
     case 'focus': focusSection(m.section, { scroll: true }); break;
     case 'mode':
       state.mode = m.mode;

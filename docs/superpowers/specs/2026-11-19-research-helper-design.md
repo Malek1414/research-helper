@@ -50,3 +50,9 @@ OCR, mobile, sync, check questions, auto-commit of exports.
 - **Fixed extension ID** via a manifest `key`, plus `import.html?url=&title=&explain=1` so other tools can hand the extension a paper.
 - **Auto-explain**: `explain=1` on the viewer starts the analysis once the chapter renders. Links already in the library are reopened, not re-added. A title passed in is kept over the PDF's metadata title.
 - **Plugin** `plugin/`: skill `read` (`/research-helper:read <topic|researcher|paper> [in chrome]`), `find.mjs` (OpenAlex works/authors with open-access PDFs, ranked by relevance blended with citations; arXiv; retry on 429; optional OPENALEX_API_KEY), `launch.mjs` (verifies the link is a PDF, starts the server detached if needed, prints the URL; `--open` opens it).
+
+## Addendum: Visual mode
+- Panel toggle **Visual | Text** (stored as `view`, default visual). Text mode is unchanged.
+- After a chapter is analysed, the viewer calls `POST /visualize` with the sections and chapter text. Claude returns structured data only (`bridge/visual.mjs`): a concept `map` {nodes (with section), links} and per section {kind: flow|stack|compare|formula|analogy|numbers|cycle, oneLiner, groups, items, links, steps[{show, caption}]}. Validated (limits, unknown ids dropped, every item in some step), cached on disk and in IndexedDB (`<id>:<chapter>:visuals`).
+- `shared/visual-layout.js` (pure) positions shapes per kind; `sidepanel/whiteboard.js` draws them with rough.js (stable seeds) and Caveat on paper, revealing step by step with draw-in animation. The current section auto-plays once.
+- Annotate all: map on top, then a visual card per section. Guided walk: the section's whiteboard first, the map folded below. Map nodes jump to their section; the current one is outlined red. A section without a usable picture falls back to text.

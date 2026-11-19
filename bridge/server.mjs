@@ -4,6 +4,7 @@
 //   GET  /fetch?url= -> a PDF downloaded for the web app
 //   GET  /health   -> {ok, model}
 //   POST /analyze  -> chapter analysis (cached on disk)
+//   POST /visualize -> whiteboard visuals + concept map for an analysed chapter (cached)
 //   POST /ask      -> {answer}
 //   POST /export   -> {file, glossary}
 import { createServer as createHttpServer } from 'node:http';
@@ -16,6 +17,8 @@ import { fileURLToPath } from 'node:url';
 import { ANALYSIS_SCHEMA, validateAnalysis } from './schema.mjs';
 import { PROMPT_VERSION, analyzePrompt, askPrompt } from './prompts.mjs';
 import { runClaude } from './claude.mjs';
+import { VISUAL_SCHEMA, VISUAL_VERSION, validateVisuals, visualPrompt } from './visual.mjs';
+import { DEFAULT_ABOUT_ME } from './prompts.mjs';
 import { writeExport } from './export.mjs';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
@@ -93,6 +96,27 @@ export function createBridge({
     return job;
   }
 
+  async function visualize(body) {
+    const { sourceTitle, chapterTitle, sections, text, aboutMe, force } = body;
+    if (!text || !Array.isArray(sections) || !sections.length) throw Object.assign(new Error('text and sections are required'), { status: 400 });
+    const secs = sections.slice(0, 20).map((s) => ({ title: String(s.title || ''), page: s.page, explanation: String(s.explanation || '') }));
+    const key = 'v' + createHash('sha256').update(JSON.stringify({ v: VISUAL_VERSION, model, aboutMe: aboutMe || '', text, secs })).digest('hex').slice(0, 31);
+    const file = join(cacheDir, `${key}.json`);
+    if (!force && existsSync(file)) return { ...JSON.parse(readFileSync(file, 'utf8')), cached: true };
+    if (inflight.has(key)) return inflight.get(key);
+    const job = (async () => {
+      const t0 = Date.now();
+      log(`visualize "${sourceTitle}" / "${chapterTitle}" (${secs.length} sections, ${model})`);
+      const raw = await run({ prompt: visualPrompt({ aboutMe: aboutMe || DEFAULT_ABOUT_ME, sourceTitle, chapterTitle, sections: secs, text }), schema: VISUAL_SCHEMA, model });
+      const visuals = validateVisuals(raw, secs.length);
+      writeFileSync(file, JSON.stringify(visuals));
+      log(`visuals done in ${((Date.now() - t0) / 1000).toFixed(0)}s: ${visuals.sections.filter(Boolean).length}/${secs.length} drawn`);
+      return { ...visuals, cached: false };
+    })().finally(() => inflight.delete(key));
+    inflight.set(key, job);
+    return job;
+  }
+
   async function ask(body) {
     if (!body.question) throw Object.assign(new Error('question is required'), { status: 400 });
     log(`ask: ${body.question.slice(0, 80)}`);
@@ -109,6 +133,7 @@ export function createBridge({
   const routes = {
     'GET /health': async () => ({ ok: true, web: true, model, version: PROMPT_VERSION }),
     'POST /analyze': analyze,
+    'POST /visualize': visualize,
     'POST /ask': ask,
     'POST /export': doExport,
   };

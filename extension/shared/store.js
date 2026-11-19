@@ -1,6 +1,6 @@
 // Library state in chrome.storage.local:
 //   sources: [{id, title, url, numPages, chapters:[{title,start,end,done}], chapter, section, mode, addedAt}]
-//   activeId, glossary {key: {term, definition, sources}}, aboutMe
+//   activeId, glossary {key: {term, definition, sources}}, aboutMe, view ('visual' | 'text')
 import './platform.js';
 import { mergeGlossary } from './library.js';
 import { putPdf, deletePdf } from './db.js';
@@ -8,8 +8,8 @@ import { putPdf, deletePdf } from './db.js';
 const area = chrome.storage.local;
 
 export async function getState() {
-  const s = await area.get(['sources', 'activeId', 'glossary', 'aboutMe']);
-  return { sources: s.sources || [], activeId: s.activeId || null, glossary: s.glossary || {}, aboutMe: s.aboutMe || '' };
+  const s = await area.get(['sources', 'activeId', 'glossary', 'aboutMe', 'view']);
+  return { sources: s.sources || [], activeId: s.activeId || null, glossary: s.glossary || {}, aboutMe: s.aboutMe || '', view: s.view === 'text' ? 'text' : 'visual' };
 }
 
 export const setState = (patch) => area.set(patch);

@@ -15,6 +15,14 @@ Open a paper or a book. It's split into chapters, and Claude reads one chapter a
 - ends each chapter with a **build card** (core idea, where it fits in a product, a code sketch) and a **glossary** that grows across all your sources
 - **exports** chapter notes as Markdown to `library/`, which [Neurotree](../Neurotree) indexes
 
+**Visual or Text** (switch at the top of the panel, Visual is the default). Visual mode turns the chapter into pictures:
+
+- a **chapter map**: the main ideas as a hand-drawn concept map, big idea on top; tap an idea to jump to its section
+- a **whiteboard drawing for every section** that draws itself in, step by step, with a one-line caption per step (▶ play, ‹ › to step). Claude picks the picture that fits: flow, layers, old vs new, a formula split into labelled parts, an everyday analogy, results as bars, or a loop
+- the full written explanation one tap away ("Full explanation"); Text mode is the classic all-words view
+
+Pictures arrive about a minute after the words and are cached like them. Claude only describes the picture as data (boxes, arrows, steps); the app draws it, so nothing Claude writes runs as code.
+
 Two modes: **Annotate all** (the whole chapter marked up at once; click a highlight to see its explanation) and **Guided walk** (section by section; the PDF scrolls to each one and the handwriting animates in. `→`/`←` work in the PDF tab).
 
 Several sources sit in the **library**, each with a segmented progress bar like Claude's context bar: done chapters are full, and the current one fills as you walk its sections. **↻ Rotate** jumps to the next unfinished chapter of the next source, so you can interleave a paper with a book.
@@ -73,6 +81,7 @@ Model: Sonnet by default. For deeper explanations: `RH_MODEL=opus npm start`.
 |---|---|
 | `extension/viewer/` | PDF tab: pdf.js canvas + text layer, highlight layer under the text, rough.js ink layer with handwritten notes in the right margin. Owns the document and calls the bridge. |
 | `extension/sidepanel/` | Library, progress, rotation, walkthrough, Q&A, build card, glossary, export. Talks to the viewer over a `BroadcastChannel`. |
+| `extension/sidepanel/whiteboard.js`, `extension/shared/visual-layout.js` | Visual mode: lays out flow / stack / compare / formula / analogy / numbers / cycle pictures and the chapter map (pure, tested), then draws them with rough.js and Caveat, step by step. |
 | `extension/shared/` | `chapters.js` (PDF outline → numbered/"Chapter N" headings → 15-page chunks; PDFs of 25 pages or fewer are one chapter), `anchor.js` (finds Claude's quotes in the text layer despite hyphenation, ligatures, spacing; prefix/suffix fallback), `library.js` (progress, rotation, glossary), storage. |
 | `web/` | The localhost app: viewer and panel as two iframes; `extension/shared/platform.js` stands in for the chrome.* APIs there (storage in localStorage, the viewer iframe as the "tab"). |
 | `plugin/` | Claude Code plugin: `skills/read` (how to choose and open a paper), `scripts/find.mjs` (OpenAlex + arXiv), `scripts/launch.mjs` (PDF check, start server, build URL). |
@@ -84,7 +93,7 @@ Only the current chapter's text goes to Claude, plus 3-sentence summaries of ear
 ## Tests
 
 ```bash
-npm test                                   # unit tests: chapters, anchoring, progress/rotation, markdown, bridge
+npm test                                   # unit tests: chapters, anchoring, progress/rotation, markdown, bridge, visuals
 npm start & npm run e2e -- paper.pdf       # real extension in headless Chrome for Testing, real Claude call, screenshots
 npm run e2e:web -- <pdf url>               # the plugin's two launch paths: web app ?add= and extension import page
 node scripts/chapters.mjs book.pdf         # show how a PDF gets split
