@@ -1,0 +1,4 @@
+node_modules/
+extension/vendor/
+.cache/
+*.log

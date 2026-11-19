@@ -1,0 +1,13 @@
+{
+  "manifest_version": 3,
+  "name": "Research Helper",
+  "version": "0.1.0",
+  "description": "Explains hard PDFs chapter by chapter, with highlights and handwritten notes, through your local Claude Code.",
+  "minimum_chrome_version": "140",
+  "permissions": ["sidePanel", "storage", "contextMenus", "tabs", "unlimitedStorage"],
+  "host_permissions": ["<all_urls>"],
+  "background": { "service_worker": "background.js", "type": "module" },
+  "side_panel": { "default_path": "sidepanel/panel.html" },
+  "action": { "default_title": "Research Helper", "default_icon": { "16": "icons/16.png", "48": "icons/48.png", "128": "icons/128.png" } },
+  "icons": { "16": "icons/16.png", "48": "icons/48.png", "128": "icons/128.png" }
+}

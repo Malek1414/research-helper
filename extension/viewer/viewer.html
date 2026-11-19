@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Research Helper</title>
+  <link rel="stylesheet" href="../vendor/pdf_viewer.css">
+  <link rel="stylesheet" href="viewer.css">
+</head>
+<body>
+  <header id="bar">
+    <div class="left">
+      <span class="logo">RH</span>
+      <span id="title">Loading…</span>
+    </div>
+    <div class="mid">
+      <button id="prev-ch" title="Previous chapter">‹</button>
+      <select id="chapter" aria-label="Chapter"></select>
+      <button id="next-ch" title="Next chapter">›</button>
+    </div>
+    <div class="right">
+      <span id="status"></span>
+      <button id="explain" class="primary">Explain chapter</button>
+      <button id="zoom-out" title="Zoom out">−</button>
+      <button id="zoom-in" title="Zoom in">+</button>
+      <button id="panel" title="Open the explainer panel">Panel</button>
+    </div>
+  </header>
+  <main id="main">
+    <div id="pages"></div>
+    <div id="empty" hidden></div>
+  </main>
+  <script type="module" src="viewer.js"></script>
+</body>
+</html>

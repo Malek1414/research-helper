@@ -1,0 +1,2 @@
+// Default reader profile used to pitch explanations (editable in the side panel).
+export const DEFAULT_ABOUT_ME = `I am a founder and product builder. I ship fast with AI coding tools, run a studio, do hackathons, pitches and video. I am strong on product, story and using LLMs, but I am not deeply technical in full-stack engineering, machine learning, computer vision, databases or data-intensive systems. I want to understand top research and books well enough to build them into real products.`;

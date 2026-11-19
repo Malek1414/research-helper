@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Research Helper</title>
+  <link rel="stylesheet" href="panel.css">
+</head>
+<body>
+  <header class="top">
+    <div class="brand"><span class="logo">RH</span> Research Helper</div>
+    <span id="bridge" class="bridge" title="Local Claude bridge">bridge</span>
+  </header>
+
+  <div id="offline" class="offline" hidden>
+    Bridge offline. In a terminal run:
+    <code id="start-cmd"></code>
+    <button id="copy-cmd" class="ghost small">Copy</button>
+  </div>
+
+  <section id="source" hidden>
+    <div class="source-head">
+      <div class="source-title" id="src-title"></div>
+      <button id="rotate" class="ghost small" title="Next unfinished chapter of the next source">↻ Rotate</button>
+    </div>
+    <div class="ctx">
+      <div class="ctx-bar" id="src-bar"></div>
+      <div class="ctx-label" id="src-label"></div>
+    </div>
+    <details id="chapters-box">
+      <summary id="chapter-summary"></summary>
+      <ol id="chapters"></ol>
+    </details>
+
+    <div class="row">
+      <div class="seg" role="tablist" aria-label="Mode">
+        <button data-mode="annotate">Annotate all</button>
+        <button data-mode="walk">Guided walk</button>
+      </div>
+      <button id="explain" class="primary">Explain chapter</button>
+    </div>
+    <div id="status" class="status"></div>
+
+    <nav class="tabs" role="tablist">
+      <button data-tab="walk" class="on">Walkthrough</button>
+      <button data-tab="build">Build card</button>
+      <button data-tab="gloss">Glossary</button>
+    </nav>
+
+    <div id="tab-walk" class="tab"></div>
+    <div id="tab-build" class="tab" hidden></div>
+    <div id="tab-gloss" class="tab" hidden>
+      <input id="gloss-filter" type="search" placeholder="Search all terms">
+      <div id="gloss-list"></div>
+    </div>
+  </section>
+
+  <section id="welcome" class="welcome" hidden>
+    <h2>Read hard things, then build them.</h2>
+    <p>Add a paper or a book. Research Helper splits it into chapters, highlights what matters, scribbles notes on the hard parts and explains it in plain words.</p>
+  </section>
+
+  <section class="library">
+    <div class="lib-head">
+      <h3>Library</h3>
+      <label class="ghost small file-btn">+ Add PDF<input id="file" type="file" accept="application/pdf,.pdf" hidden></label>
+    </div>
+    <button id="this-tab" class="wide" hidden>Open this tab's PDF here</button>
+    <form id="url-form" class="url-form">
+      <input id="url" type="url" placeholder="Paste a PDF link (arXiv, docs…)">
+      <button class="small">Add</button>
+    </form>
+    <ul id="sources"></ul>
+  </section>
+
+  <details class="settings">
+    <summary>About me (how explanations are pitched)</summary>
+    <textarea id="about" rows="6"></textarea>
+    <button id="save-about" class="small">Save</button>
+  </details>
+
+  <script type="module" src="panel.js"></script>
+</body>
+</html>
