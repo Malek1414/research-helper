@@ -73,7 +73,7 @@ node plugin/scripts/launch.mjs --url https://arxiv.org/pdf/1706.03762 --title "A
 - on a tab showing a PDF: **Open this tab's PDF here**
 - or right-click any PDF link → **Open in Research Helper**
 
-Press **Explain chapter**. A chapter takes about 1-2 minutes the first time; after that it's cached (`.cache/analyses`). For Chrome's own split view, put the Research Helper tab next to anything else you're working in. The explainer lives in the side panel either way.
+Press **Explain chapter**. Sections stream in as Claude writes them: the first one shows up after about 8 seconds, the first whiteboard after about 30, and a 12-page paper is fully explained and drawn in about 80 seconds. While you read, the next chapter is explained in the background, so moving on is usually instant. Everything is cached (`.cache/analyses`). For Chrome's own split view, put the Research Helper tab next to anything else you're working in. The explainer lives in the side panel either way.
 
 Model: Sonnet by default. For deeper explanations: `RH_MODEL=opus npm start`.
 
@@ -91,6 +91,8 @@ Model: Sonnet by default. For deeper explanations: `RH_MODEL=opus npm start`.
 | `library/` | Your exported chapter notes and `glossary.md`. |
 
 Only the current chapter's text goes to Claude, plus 3-sentence summaries of earlier chapters, so books work chapter by chapter.
+
+**Why it is fast.** `POST /explain` runs `claude -p` with `stream-json` and reads the structured output while it is being written (`bridge/partial.mjs` pulls out each finished section). Every finished section goes to the panel right away, and as soon as three are done a parallel Claude call starts drawing their whiteboards; the concept map is its own small call. Requests for the same chapter share one job, so the background prefetch of the next chapter and you opening it never run twice.
 
 ## Tests
 

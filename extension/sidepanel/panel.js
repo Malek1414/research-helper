@@ -23,6 +23,10 @@ const ui = {
   autoKey: null, // the whiteboard that last auto-played
   timer: null,
   openMore: new Set(), // "Full explanation" boxes left open
+  seen: {}, // `${sourceId}:${chapter}` -> sections already shown (new ones animate in)
+  chaptersOpen: false,
+  menuOpen: false,
+  drawerOpen: false,
 };
 const STEP_MS = 3400;
 const TRACE_MS = 1700;
@@ -30,7 +34,11 @@ const TRACE_MS = 1700;
 ui.code = { pick: null, trace: null, busy: false, error: '', step: 0, own: '', ownLang: 'auto' };
 
 const active = () => ui.store.sources.find((s) => s.id === ui.store.activeId) || null;
-const dots = (n) => '●'.repeat(n) + '○'.repeat(5 - n);
+const diffChip = (n) => `<span class="chip diff" title="Difficulty ${n}/5">${[1, 2, 3, 4, 5].map((k) => `<i class="${k <= n ? 'on' : ''}"></i>`).join('')}</span>`;
+const secs = (ms) => {
+  const t = Math.max(0, Math.round(ms / 1000));
+  return t < 60 ? `${t}s` : `${Math.floor(t / 60)}m ${String(t % 60).padStart(2, '0')}s`;
+};
 
 async function viewerOpen() {
   const tabs = await chrome.tabs.query({ url: `${chrome.runtime.getURL('viewer/viewer.html')}*` });
@@ -53,40 +61,48 @@ async function command(msg) {
 function render() {
   const src = active();
   $('source').hidden = !src;
-  $('welcome').hidden = !!src || ui.store.sources.length > 0;
+  $('welcome').hidden = !!src;
+  $('drawer').hidden = $('scrim').hidden = !ui.drawerOpen;
+  $('menu').hidden = !ui.menuOpen;
+  $('src-title').textContent = src ? src.title : 'Research Helper';
   renderLibrary();
-  if (!src) return;
+  if (!src) {
+    $('progress').hidden = true;
+    return;
+  }
   const doc = ui.doc?.sourceId === src.id ? ui.doc : null;
   const chapter = doc ? doc.chapter : src.chapter || 0;
   const p = progress(src);
 
-  $('src-title').textContent = src.title;
   const analysis = doc?.analysis || (ui.cachedAnalysis?.key === `${src.id}:${chapter}` && ui.cachedAnalysis.analysis) || null;
   const secCount = analysis?.sections.length || 0;
   const secAt = Math.min(doc?.section ?? src.section ?? 0, Math.max(0, secCount - 1));
   // Like a context-window bar: done chapters are full, the current one fills as you walk its sections.
   const fill = (c, i) => (c.done ? 100 : i === chapter && secCount ? Math.round(((secAt + 1) / secCount) * 100) : 0);
   $('src-bar').innerHTML = (src.chapters || []).map((c, i) => `<span class="${c.done ? 'done' : ''} ${i === chapter ? 'cur' : ''}" style="--fill:${fill(c, i)}%" title="${esc(`${i + 1}. ${c.title}`)}"></span>`).join('');
-  $('src-label').textContent = src.chapters?.length
-    ? `${p.done} / ${p.total} chapters understood · ${p.pct}%${secCount && !src.chapters[chapter]?.done ? ` · section ${secAt + 1}/${secCount}` : ''}`
-    : 'Splitting into chapters…';
+  $('src-label').textContent = src.chapters?.length ? `${p.pct}% understood` : 'Splitting…';
+  $('src-label').title = `${p.done} of ${p.total} chapters done${secCount ? `, section ${secAt + 1} of ${secCount}` : ''}`;
   const ch = src.chapters?.[chapter];
-  $('chapter-summary').textContent = ch ? `Chapter ${chapter + 1}: ${ch.title}` : 'Chapters';
+  $('ch-no').textContent = ch ? `${chapter + 1}/${src.chapters.length}` : '';
+  $('chapter-summary').textContent = ch ? ch.title : 'Chapters';
+  const preparing = new Set(doc?.prefetching || []);
+  $('chapters').hidden = !ui.chaptersOpen;
   $('chapters').innerHTML = (src.chapters || []).map((c, i) => `
     <li data-ch="${i}" class="${i === chapter ? 'cur' : ''} ${c.done ? 'done' : ''}">
-      <span class="tick">${c.done ? '✓' : i + 1}</span><span>${esc(c.title)}</span><span class="pp">p ${c.start + 1}-${c.end + 1}</span>
+      <span class="tick">${c.done ? '✓' : i + 1}</span><span>${esc(c.title)}${preparing.has(i) ? '<span class="ready">● preparing</span>' : ''}</span><span class="pp">p ${c.start + 1}-${c.end + 1}</span>
     </li>`).join('');
 
   const mode = doc?.mode || src.mode || 'annotate';
-  for (const b of document.querySelectorAll('.seg button')) b.classList.toggle('on', b.dataset.mode === mode);
-  $('explain').textContent = doc?.busy ? 'Explaining…' : analysis ? 'Re-explain' : 'Explain chapter';
+  for (const b of document.querySelectorAll('[data-mode]')) b.classList.toggle('on', b.dataset.mode === mode);
+  $('explain').textContent = analysis ? 'Re-explain chapter' : 'Explain chapter';
   $('explain').disabled = !!doc?.busy;
+  $('redraw').disabled = !analysis || !!doc?.visualBusy;
   $('rotate').disabled = !nextInRotation(ui.store.sources, src.id);
 
   const view = ui.store.view;
-  for (const b of document.querySelectorAll('.seg.view button')) b.classList.toggle('on', b.dataset.view === view);
+  for (const b of document.querySelectorAll('[data-view]')) b.classList.toggle('on', b.dataset.view === view);
   const visuals = doc ? doc.visuals : (ui.cachedVisuals?.key === `${src.id}:${chapter}` && ui.cachedVisuals.visuals) || null;
-  $('view-hint').textContent = view === 'visual' && analysis ? (doc?.visualBusy ? 'Drawing the pictures…' : visuals ? 'Pictures first, words on demand' : '') : '';
+  renderProgress(doc, analysis, view);
   for (const b of document.querySelectorAll('.tabs button')) b.classList.toggle('on', b.dataset.tab === ui.tab);
   for (const t of ['walk', 'build', 'code', 'gloss']) $(`tab-${t}`).hidden = ui.tab !== t;
   renderWalk(src, chapter, analysis, doc, mode, view === 'visual' ? visuals : null);
@@ -95,14 +111,49 @@ function render() {
   if (ui.tab === 'code') renderCode(src, doc, analysis);
 }
 
+// Live progress while Claude works: reading, writing section N, drawing pictures.
+function renderProgress(doc, analysis, view) {
+  const pr = doc?.progress;
+  const drawing = view === 'visual' && doc?.visualBusy;
+  const show = !!(doc?.busy || drawing) && !!pr;
+  $('progress').hidden = !show;
+  clearInterval(ui.clock);
+  if (!show) return;
+  const total = analysis?.sections.length || 0;
+  let text;
+  let fill = null;
+  if (pr.phase === 'reading') text = 'Claude is reading the chapter';
+  else if (pr.phase === 'writing') text = `Writing section ${pr.sections + 1}<span class="dim"> · ${pr.sections} ready</span>`;
+  else {
+    text = `Drawing pictures · ${pr.drawn} of ${total}`;
+    fill = total ? Math.max(4, Math.round((pr.drawn / total) * 100)) : 0;
+  }
+  $('progress-text').innerHTML = text;
+  $('progress').classList.toggle('indeterminate', fill === null);
+  $('progress-fill').style.width = fill === null ? '' : `${fill}%`;
+  const tick = () => ($('progress-time').textContent = secs(Date.now() - pr.startedAt));
+  tick();
+  ui.clock = setInterval(tick, 1000);
+}
+
 function renderWalk(src, chapter, a, doc, mode, visuals) {
   const box = $('tab-walk');
   if (!a) {
+    const ch = src.chapters?.[chapter];
     box.innerHTML = doc?.busy
-      ? '<p class="status busy">Claude is reading this chapter. Highlights and notes appear on the PDF when it is done.</p>'
-      : '<p class="status">Press <b>Explain chapter</b>. Claude reads only this chapter, then walks you through it.</p>';
+      ? [0, 1, 2].map((k) => `<article class="card skeleton">${k === 0 ? '<div class="label"><span class="spinner"></span>Reading the chapter. The first section shows up in a few seconds.</div>' : ''}<div class="bar t"></div><div class="bar s"></div><div class="bar xs"></div></article>`).join('')
+      : `<div class="cta">
+          <h3>${ch ? esc(ch.title) : 'This chapter'}</h3>
+          <p>${ch ? `Pages ${ch.start + 1} to ${ch.end + 1}. ` : ''}Claude reads only this chapter, highlights what matters and draws each idea.</p>
+          <button id="explain-cta" class="primary">Explain this chapter</button>
+          <p class="fine">Sections appear one by one as they are written.</p>
+        </div>`;
     return;
   }
+  const partial = a.buildCard === null;
+  const seenKey = `${src.id}:${chapter}`;
+  const seen = ui.seen[seenKey] ?? (partial ? 0 : a.sections.length);
+  ui.seen[seenKey] = a.sections.length;
   const cur = Math.min(doc?.section ?? src.section ?? 0, a.sections.length - 1);
   const visual = ui.store.view === 'visual';
   const card = (s, i) => {
@@ -112,13 +163,14 @@ function renderWalk(src, chapter, a, doc, mode, visuals) {
       <div class="qa"><div class="q">${esc(x.question)}</div>
       <div class="body">${x.pending ? '<span class="status busy">Thinking…</span>' : x.error ? `<span class="status error">${esc(x.error)}</span>` : renderMarkdown(x.answer)}</div></div>`).join('');
     const askBox = i === cur ? `<div class="ask"><form data-ask="${i}"><input name="q" placeholder="Ask about this part…" autocomplete="off"><button class="small">Ask</button></form>${qa}</div>` : '';
-    const head = `
-        <h4><span>${i + 1}. ${esc(s.title)}</span><span class="dots" title="Difficulty ${s.difficulty}/5">${dots(s.difficulty)}</span></h4>
-        <div class="meta"><span>p. ${s.page}</span>${anchored ? '' : '<span class="nohl">no highlight found</span>'}${visual && !visuals && doc?.visualBusy ? '<span class="drawing">drawing…</span>' : ''}</div>`;
     const v = visuals?.sections?.[i];
+    const head = `
+        <h4><span><span class="n">${i + 1}</span>${esc(s.title)}</span></h4>
+        <div class="meta"><span class="chip page" data-page-sec="${i}" title="Show it on the PDF">p. ${s.page}</span>${diffChip(s.difficulty)}${anchored ? '' : '<span class="chip warn">no highlight found</span>'}${visual && !v && doc?.visualBusy ? '<span class="chip drawing">drawing…</span>' : ''}</div>`;
+    const fresh = i >= seen ? 'fresh' : '';
     if (v) {
       return `
-      <article class="card visual ${i === cur ? 'on' : ''}" data-section="${i}">
+      <article class="card visual ${i === cur ? 'on' : ''} ${fresh}" data-section="${i}">
         ${head}
         ${v.oneLiner ? `<p class="one">${esc(v.oneLiner)}</p>` : ''}
         <div class="wb" data-wb="${i}"></div>
@@ -135,7 +187,7 @@ function renderWalk(src, chapter, a, doc, mode, visuals) {
       </article>`;
     }
     return `
-      <article class="card ${i === cur ? 'on' : ''}" data-section="${i}">
+      <article class="card ${i === cur ? 'on' : ''} ${fresh}" data-section="${i}">
         ${head}
         ${s.note ? `<div class="note-hand">${esc(s.note)}</div>` : ''}
         <div class="body">${renderMarkdown(s.explanation)}</div>
@@ -147,22 +199,23 @@ function renderWalk(src, chapter, a, doc, mode, visuals) {
     // Annotate all: map open on top. Guided walk: the section comes first, the map folds below it.
     const mapOpen = mode === 'walk' ? ui.openMore.has('map:open') : !ui.openMore.has('map:closed');
     if (visuals?.map) mapHtml = `<details class="map-box" data-more="${mode === 'walk' ? 'map-walk' : 'map'}" ${mapOpen ? 'open' : ''}><summary>Chapter map</summary><div class="wb" id="wb-map"></div><p class="hint">Tap an idea to jump to it.</p></details>`;
-    else if (doc?.visualBusy) mapHtml = '<p class="status busy">Drawing this chapter as pictures… (about a minute). The words are below meanwhile.</p>';
     else if (doc?.visualError) mapHtml = `<p class="status error">Could not draw this chapter: ${esc(doc.visualError)} <button id="draw-again" class="small">Try again</button></p>`;
-    else if (!visuals) mapHtml = '<p class="status">No pictures yet. <button id="draw-again" class="small">Draw this chapter</button></p>';
+    else if (!visuals && !doc?.visualBusy && !doc?.busy) mapHtml = '<p class="status">No pictures yet. <button id="draw-again" class="small">Draw this chapter</button></p>';
   }
+  const writing = partial ? `<article class="card skeleton"><div class="label"><span class="spinner"></span>Writing section ${a.sections.length + 1}…</div><div class="bar t"></div><div class="bar s"></div><div class="bar xs"></div></article>` : '';
   if (mode === 'walk') {
     const last = cur === a.sections.length - 1;
     box.innerHTML = `
       <div class="walk-nav">
         <button id="w-back" class="small" ${cur === 0 ? 'disabled' : ''}>‹ Back</button>
-        <span>Section ${cur + 1} of ${a.sections.length}</span>
-        ${last ? '<button id="w-finish" class="small primary">Finish chapter ✓</button>' : '<button id="w-next" class="small primary">Next ›</button>'}
+        <span class="walk-dots">${a.sections.map((_, k) => `<i class="${k <= cur ? 'on' : ''}"></i>`).join('')}</span>
+        <span>${cur + 1}/${a.sections.length}${partial ? '+' : ''}</span>
+        ${last && partial ? '<button class="small" disabled>Writing…</button>' : last ? '<button id="w-finish" class="small primary">Finish ✓</button>' : '<button id="w-next" class="small primary">Next ›</button>'}
       </div>
       ${card(a.sections[cur], cur)}
       ${mapHtml}`;
   } else {
-    box.innerHTML = mapHtml + a.sections.map(card).join('');
+    box.innerHTML = mapHtml + a.sections.map(card).join('') + writing;
   }
   if (visual && visuals) hydrateWhiteboards(src, chapter, visuals, cur);
 }
@@ -248,11 +301,15 @@ function renderBuild(a, ch) {
     return;
   }
   const b = a.buildCard;
+  if (!b) {
+    box.innerHTML = '<article class="card skeleton"><div class="label"><span class="spinner"></span>The build card is written after the sections.</div><div class="bar t"></div><div class="bar s"></div><div class="bar s"></div><div class="bar xs"></div></article>';
+    return;
+  }
   box.innerHTML = `
     <div class="build">
       <h5>Core idea</h5><div class="core">${renderMarkdown(b.coreIdea)}</div>
-      <h5>Where it fits in a product</h5><div class="body"><ul>${b.whereItFits.map((w) => `<li>${renderMarkdown(w).replace(/^<p>|<\/p>$/g, '')}</li>`).join('')}</ul></div>
-      ${b.sketch ? `<h5>Sketch · ${esc(b.sketchLang)}</h5><pre><code>${esc(b.sketch)}</code></pre><button id="copy-sketch" class="small">Copy sketch</button> <button id="step-sketch" class="small primary">▶ Step through it</button>` : ''}
+      <h5>Where it fits in a product</h5><ul class="fits">${b.whereItFits.map((w) => `<li>${renderMarkdown(w).replace(/^<p>|<\/p>$/g, '')}</li>`).join('')}</ul>
+      ${b.sketch ? `<h5>Sketch · ${esc(b.sketchLang)}</h5><pre><code>${esc(b.sketch)}</code></pre><div class="sketch-actions"><button id="step-sketch" class="small primary">▶ Step through it</button><button id="copy-sketch" class="small">Copy</button></div>` : ''}
       <h5>In short</h5><div class="body">${renderMarkdown(a.summary)}</div>
       <div class="actions">
         <button id="export" class="primary">Export to Neurotree</button>
@@ -425,6 +482,10 @@ function setStatus(text, kind = '') {
   $('status').textContent = text;
   $('status').className = `status ${kind}`;
 }
+function libStatus(text, kind = '') {
+  $('lib-status').textContent = text;
+  $('lib-status').className = `status ${kind}`;
+}
 
 // ---------- data ----------
 async function refreshStore() {
@@ -441,7 +502,7 @@ async function refreshStore() {
 async function checkBridge() {
   const ok = await bridge.health();
   $('bridge').className = `bridge ${ok ? 'on' : 'off'}`;
-  $('bridge').textContent = ok ? 'bridge on' : 'bridge off';
+  $('bridge').title = ok ? 'Bridge on: Claude is reachable' : 'Bridge off';
   $('offline').hidden = ok;
 }
 
@@ -461,7 +522,8 @@ listen('panel', (m) => {
       render();
       break;
     case 'status':
-      setStatus(m.text, m.kind);
+      // The progress strip shows busy states; only errors need words here.
+      setStatus(m.kind === 'error' ? m.text : '', m.kind);
       break;
     case 'focus':
       if (ui.doc) ui.doc.section = m.section;
@@ -494,8 +556,21 @@ function gotoSection(si) {
 
 document.addEventListener('click', async (e) => {
   const t = e.target;
+  if (ui.menuOpen && !t.closest('#menu-btn')) {
+    ui.menuOpen = false;
+    $('menu').hidden = true;
+  }
   const chLi = t.closest('#chapters li');
-  if (chLi) return command({ cmd: 'open', chapter: Number(chLi.dataset.ch) });
+  if (chLi) {
+    ui.chaptersOpen = false;
+    render();
+    return command({ cmd: 'open', chapter: Number(chLi.dataset.ch) });
+  }
+  const pageChip = t.closest('[data-page-sec]');
+  if (pageChip) {
+    e.stopPropagation();
+    return gotoSection(Number(pageChip.dataset.pageSec));
+  }
 
   const rm = t.closest('[data-rm]');
   if (rm) {
@@ -512,16 +587,18 @@ document.addEventListener('click', async (e) => {
   const srcLi = t.closest('#sources li');
   if (srcLi) {
     ui.removing = null;
+    ui.drawerOpen = false;
+    render();
     return openViewer(srcLi.dataset.src);
   }
 
-  const modeBtn = t.closest('.seg button');
+  const modeBtn = t.closest('[data-mode]');
   if (modeBtn) {
     if (ui.doc) ui.doc.mode = modeBtn.dataset.mode;
     render();
     return command({ cmd: 'mode', mode: modeBtn.dataset.mode });
   }
-  const viewBtn = t.closest('.seg.view button');
+  const viewBtn = t.closest('[data-view]');
   if (viewBtn) {
     const view = viewBtn.dataset.view;
     ui.store.view = view;
@@ -560,7 +637,7 @@ document.addEventListener('click', async (e) => {
     ui.tab = tabBtn.dataset.tab;
     return render();
   }
-  const cardEl = t.closest('.card');
+  const cardEl = t.closest('.card[data-section]');
   if (cardEl && !t.closest('form') && !t.closest('a')) {
     const si = Number(cardEl.dataset.section);
     if (si !== (ui.doc?.section ?? -1)) gotoSection(si);
@@ -604,9 +681,34 @@ document.addEventListener('click', async (e) => {
     case 'tv-play':
       return toggleTracePlay();
     case 'draw-again':
+    case 'redraw':
       return command({ cmd: 'visualize', force: true });
+    case 'explain-cta':
     case 'explain':
-      return command({ cmd: 'explain', force: $('explain').textContent === 'Re-explain' });
+      return command({ cmd: 'explain', force: $('explain').textContent.startsWith('Re-') });
+    case 'menu-btn':
+      ui.menuOpen = !ui.menuOpen;
+      $('menu').hidden = !ui.menuOpen;
+      return;
+    case 'chapter-btn':
+      ui.chaptersOpen = !ui.chaptersOpen;
+      return render();
+    case 'lib-btn':
+    case 'welcome-add':
+      ui.drawerOpen = true;
+      render();
+      if (t.closest('#welcome-add')) $('file').click();
+      return;
+    case 'drawer-close':
+    case 'scrim':
+      ui.drawerOpen = false;
+      return render();
+    case 'open-settings':
+      ui.drawerOpen = true;
+      render();
+      $('settings').open = true;
+      $('about').focus();
+      return;
     case 'rotate': {
       const next = nextInRotation(ui.store.sources, ui.store.activeId);
       if (next) openViewer(next.sourceId, next.chapter);
@@ -640,11 +742,13 @@ document.addEventListener('click', async (e) => {
       return;
     case 'this-tab':
       try {
-        setStatus('Downloading PDF…', 'busy');
+        libStatus('Downloading PDF…', 'busy');
         await importFromUrl(ui.thisTabUrl);
-        setStatus('');
+        libStatus('');
+        ui.drawerOpen = false;
+        render();
       } catch (err) {
-        setStatus(err.message + (ui.thisTabUrl.startsWith('file:') ? ' (turn on "Allow access to file URLs" for the extension, or use + Add PDF)' : ''), 'error');
+        libStatus(err.message + (ui.thisTabUrl.startsWith('file:') ? ' (turn on "Allow access to file URLs" for the extension, or use + Add PDF)' : ''), 'error');
       }
       return;
     case 'save-about':
@@ -661,12 +765,14 @@ document.addEventListener('submit', async (e) => {
     const url = $('url').value.trim();
     if (!url) return;
     try {
-      setStatus('Downloading PDF…', 'busy');
+      libStatus('Downloading PDF…', 'busy');
       await importFromUrl(url);
       $('url').value = '';
-      setStatus('');
+      libStatus('');
+      ui.drawerOpen = false;
+      render();
     } catch (err) {
-      setStatus(err.message, 'error');
+      libStatus(err.message, 'error');
     }
     return;
   }
@@ -683,7 +789,11 @@ document.addEventListener('submit', async (e) => {
 
 $('file').addEventListener('change', async (e) => {
   const file = e.target.files[0];
-  if (file) await importFromFile(file);
+  if (file) {
+    await importFromFile(file);
+    ui.drawerOpen = false;
+    render();
+  }
   e.target.value = '';
 });
 document.addEventListener('toggle', (e) => {
@@ -702,6 +812,10 @@ document.addEventListener('input', (e) => {
   } else if (e.target.id === 'own-code') ui.code.own = e.target.value;
 });
 document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && (ui.drawerOpen || ui.menuOpen || ui.chaptersOpen)) {
+    ui.drawerOpen = ui.menuOpen = ui.chaptersOpen = false;
+    return render();
+  }
   if (ui.tab !== 'code' || !ui.code.trace || /^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName)) return;
   if (e.key === 'ArrowRight') traceStep(1);
   else if (e.key === 'ArrowLeft') traceStep(-1);

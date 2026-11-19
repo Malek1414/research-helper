@@ -165,3 +165,56 @@ test('pdf proxy refuses local and private addresses by default', async () => {
   for (const a of ['10.0.0.1', '172.20.1.1', '100.64.0.1', '::ffff:127.0.0.1', 'fd00::1', 'fe80::1', '0.0.0.0']) assert.ok(isPrivateAddress(a), a);
   for (const a of ['151.101.1.1', '8.8.8.8', '2606:4700::1111', '172.32.0.1']) assert.ok(!isPrivateAddress(a), a);
 });
+
+test('completeItems returns only the finished items of a half-written array', async () => {
+  const { completeItems } = await import('../bridge/partial.mjs');
+  const full = JSON.stringify({ summary: 'a "q" {x}', sections: [{ t: 'one ]}' }, { t: 'two', n: [1, 2] }, { t: 'three' }] });
+  const cut = full.slice(0, full.indexOf('three') - 3);
+  assert.deepEqual(completeItems(cut, 'sections'), [{ t: 'one ]}' }, { t: 'two', n: [1, 2] }]);
+  assert.equal(completeItems(full, 'sections').length, 3);
+  assert.deepEqual(completeItems('{"sum', 'sections'), []);
+});
+
+test('explain streams partial sections, draws visuals in parallel batches and caches both', async () => {
+  const SECTIONS = Array.from({ length: 5 }, (_, i) => ({ title: `S${i}`, page: 2, difficulty: 2, explanation: `Explains ${i}.`, anchors: [], note: '' }));
+  const FULL = { ...RAW, sections: SECTIONS };
+  const visualFor = (i) => ({ section: i, kind: 'flow', oneLiner: 'x', groups: [], items: [{ id: 'a', label: 'A', detail: '', icon: '', group: '', value: 0 }, { id: 'b', label: 'B', detail: '', icon: '', group: '', value: 0 }], links: [], steps: [{ show: ['a', 'b'], caption: 'c' }] });
+  const runs = [];
+  const run = async ({ schema, prompt, onPartial }) => {
+    runs.push(Object.keys(schema.properties).join(','));
+    if (schema.properties.summary) {
+      const json = JSON.stringify(FULL);
+      for (let n = 40; n < json.length; n += 60) {
+        await new Promise((r) => setTimeout(r, 2));
+        onPartial?.(json.slice(0, n));
+      }
+      return FULL;
+    }
+    if (schema.properties.map) return { map: { nodes: [{ id: 'x', label: 'X', section: 0 }, { id: 'y', label: 'Y', section: 1 }], links: [] } };
+    const from = Number(prompt.match(/numbers (\d+) to (\d+)/)[1]);
+    const to = Number(prompt.match(/numbers (\d+) to (\d+)/)[2]);
+    return { sections: Array.from({ length: to - from + 1 }, (_, j) => visualFor(from + j)) };
+  };
+  await withBridge(async ({ base }) => {
+    const body = { sourceTitle: 'P', chapterTitle: 'C', pageRange: [2, 5], text: '[[p 2]] hello' };
+    const events = (await (await post(`${base}/explain`, body)).text()).trim().split('\n').map((l) => JSON.parse(l));
+    const partials = events.filter((e) => e.type === 'analysis' && e.partial);
+    assert.ok(partials.length >= 2, 'sections arrive one by one');
+    assert.ok(partials[0].analysis.sections.length < 5);
+    const final = events.find((e) => e.type === 'analysis' && !e.partial);
+    assert.equal(final.analysis.sections.length, 5);
+    assert.equal(final.analysis.glossary.length, 1);
+    const vis = events.filter((e) => e.type === 'visuals' && !e.partial).pop();
+    assert.equal(vis.visuals.sections.filter(Boolean).length, 5);
+    assert.ok(vis.visuals.map);
+    assert.equal(events.at(-1).type, 'end');
+    assert.equal(runs.filter((r) => r === 'sections').length, 2, '5 sections = batches of 3 + 2');
+    // Both are cached now: no new Claude calls, and /visualize hits the same cache.
+    const before = runs.length;
+    const again = (await (await post(`${base}/explain`, body)).text()).trim().split('\n').map((l) => JSON.parse(l));
+    assert.equal(again.filter((e) => e.type === 'visuals').length, 1);
+    const v = await (await post(`${base}/visualize`, { ...body, sections: final.analysis.sections })).json();
+    assert.equal(v.cached, true);
+    assert.equal(runs.length, before);
+  }, { run });
+});

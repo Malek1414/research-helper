@@ -3,6 +3,8 @@
 //   GET  /          -> localhost web app (web/index.html, serves extension/ files)
 //   GET  /fetch?url= -> a PDF downloaded for the web app
 //   GET  /health   -> {ok, model}
+//   POST /explain  -> NDJSON stream: the analysis section by section, then whiteboards
+//                     drawn in parallel batches while the text is still coming (both cached)
 //   POST /analyze  -> chapter analysis (cached on disk)
 //   POST /visualize -> whiteboard visuals + concept map for an analysed chapter (cached)
 //   POST /trace    -> step-by-step trace of a piece of code (cached)
@@ -19,7 +21,8 @@ import { fileURLToPath } from 'node:url';
 import { ANALYSIS_SCHEMA, validateAnalysis } from './schema.mjs';
 import { PROMPT_VERSION, analyzePrompt, askPrompt } from './prompts.mjs';
 import { runClaude } from './claude.mjs';
-import { VISUAL_SCHEMA, VISUAL_VERSION, validateVisuals, visualPrompt } from './visual.mjs';
+import { MAP_SCHEMA, VISUAL_SECTIONS_SCHEMA, VISUAL_VERSION, mapPrompt, validateVisuals, visualBatchPrompt } from './visual.mjs';
+import { completeItems } from './partial.mjs';
 import { DEFAULT_ABOUT_ME } from './prompts.mjs';
 import { LISTINGS_SCHEMA, TRACE_SCHEMA, TRACE_VERSION, listingsPrompt, tracePrompt, validateListings, validateTrace } from './trace.mjs';
 import { writeExport } from './export.mjs';
@@ -99,24 +102,144 @@ export function createBridge({
     return job;
   }
 
+  const BATCH = 3;
+  const visualSecs = (sections) => sections.slice(0, 20).map((s) => ({ title: String(s.title || ''), page: s.page, explanation: String(s.explanation || '') }));
+  const visualsKey = (text, aboutMe, secs) => 'v' + createHash('sha256').update(JSON.stringify({ v: VISUAL_VERSION, model, aboutMe: aboutMe || '', text, secs })).digest('hex').slice(0, 31);
+
+  // Draws whiteboards in parallel batches of BATCH sections plus one small call for
+  // the concept map. feed() can start batches while the analysis is still streaming.
+  function visualDrawer({ sourceTitle, chapterTitle, text, aboutMe, onUpdate = () => {} }) {
+    const about = aboutMe || DEFAULT_ABOUT_ME;
+    const raws = [];
+    const jobs = [];
+    const errors = [];
+    let map = null;
+    let count = 0;
+    let next = 0;
+    let mapStarted = false;
+    const update = () => {
+      try { onUpdate(validateVisuals({ map, sections: raws }, count)); } catch { /* nothing drawable yet */ }
+    };
+    const batch = (secs, from, to) => jobs.push(run({
+      prompt: visualBatchPrompt({ aboutMe: about, sourceTitle, chapterTitle, sections: secs.slice(from, to), offset: from, text }),
+      schema: VISUAL_SECTIONS_SCHEMA, model,
+    }).then((raw) => {
+      (Array.isArray(raw?.sections) ? raw.sections : []).forEach((v, j) => {
+        const i = Number.isInteger(v?.section) && v.section >= from && v.section < to ? v.section : from + j;
+        if (i < to) raws.push({ ...v, section: i });
+      });
+      update();
+    }, (e) => errors.push(e)));
+    const drawer = {
+      feed(secs, final = false) {
+        count = Math.max(count, secs.length);
+        while (secs.length - next >= BATCH || (final && next < secs.length)) {
+          const to = Math.min(secs.length, next + BATCH);
+          batch(secs, next, to);
+          next = to;
+        }
+        if (final && !mapStarted) {
+          mapStarted = true;
+          jobs.push(run({ prompt: mapPrompt({ sourceTitle, chapterTitle, sections: secs }), schema: MAP_SCHEMA, model })
+            .then((raw) => { map = raw?.map || null; update(); }, (e) => errors.push(e)));
+        }
+      },
+      async finish(secs) {
+        drawer.feed(secs, true);
+        for (let n = 0; n < jobs.length; n = jobs.length) await Promise.all(jobs.slice(n));
+        if (!raws.length) throw errors[0] || new Error('no usable visuals');
+        return validateVisuals({ map, sections: raws }, secs.length);
+      },
+    };
+    return drawer;
+  }
+
   async function visualize(body) {
     const { sourceTitle, chapterTitle, sections, text, aboutMe, force } = body;
     if (!text || !Array.isArray(sections) || !sections.length) throw Object.assign(new Error('text and sections are required'), { status: 400 });
-    const secs = sections.slice(0, 20).map((s) => ({ title: String(s.title || ''), page: s.page, explanation: String(s.explanation || '') }));
-    const key = 'v' + createHash('sha256').update(JSON.stringify({ v: VISUAL_VERSION, model, aboutMe: aboutMe || '', text, secs })).digest('hex').slice(0, 31);
+    const secs = visualSecs(sections);
+    const key = visualsKey(text, aboutMe, secs);
     const file = join(cacheDir, `${key}.json`);
     if (!force && existsSync(file)) return { ...JSON.parse(readFileSync(file, 'utf8')), cached: true };
     if (inflight.has(key)) return inflight.get(key);
     const job = (async () => {
       const t0 = Date.now();
-      log(`visualize "${sourceTitle}" / "${chapterTitle}" (${secs.length} sections, ${model})`);
-      const raw = await run({ prompt: visualPrompt({ aboutMe: aboutMe || DEFAULT_ABOUT_ME, sourceTitle, chapterTitle, sections: secs, text }), schema: VISUAL_SCHEMA, model });
-      const visuals = validateVisuals(raw, secs.length);
+      log(`visualize "${sourceTitle}" / "${chapterTitle}" (${secs.length} sections in parallel, ${model})`);
+      const visuals = await visualDrawer({ sourceTitle, chapterTitle, text, aboutMe, onUpdate: body.onUpdate }).finish(secs);
       writeFileSync(file, JSON.stringify(visuals));
       log(`visuals done in ${((Date.now() - t0) / 1000).toFixed(0)}s: ${visuals.sections.filter(Boolean).length}/${secs.length} drawn`);
       return { ...visuals, cached: false };
     })().finally(() => inflight.delete(key));
     inflight.set(key, job);
+    return job;
+  }
+
+  // The fast path the viewer uses: streams the analysis as each section is
+  // finished and starts drawing whiteboards for finished sections right away.
+  // emit({type: 'analysis'|'visuals', ...}); partial events carry partial: true.
+  async function explainPipeline(body, emit) {
+    const { sourceTitle, chapterTitle, pageRange, text, storySoFar, aboutMe, force } = body;
+    const key = createHash('sha256').update(JSON.stringify({ v: PROMPT_VERSION, model, aboutMe: aboutMe || '', text })).digest('hex').slice(0, 32);
+    const file = join(cacheDir, `${key}.json`);
+    let analysis = !force && existsSync(file) ? JSON.parse(readFileSync(file, 'utf8')) : null;
+    const t0 = Date.now();
+    const drawer = body.visuals === false ? null : visualDrawer({
+      sourceTitle, chapterTitle, text, aboutMe,
+      onUpdate: (visuals) => emit({ type: 'visuals', visuals, partial: true }),
+    });
+    if (!analysis) {
+      log(`explain "${sourceTitle}" / "${chapterTitle}" (${text.length} chars, streaming, ${model})`);
+      let seen = 0;
+      const raw = await run({
+        prompt: analyzePrompt({ aboutMe, sourceTitle, chapterTitle, pageRange, storySoFar, text }), schema: ANALYSIS_SCHEMA, model,
+        onPartial: (json) => {
+          const items = completeItems(json, 'sections');
+          if (items.length <= seen) return;
+          seen = items.length;
+          let sections;
+          try { sections = validateAnalysis({ sections: items }, pageRange).sections; } catch { return; }
+          if (seen === 1 || sections.length === 1) log(`first section after ${((Date.now() - t0) / 1000).toFixed(1)}s`);
+          emit({ type: 'analysis', partial: true, analysis: { summary: '', sections, glossary: [], buildCard: null } });
+          drawer?.feed(visualSecs(sections));
+        },
+      });
+      analysis = validateAnalysis(raw, pageRange);
+      writeFileSync(file, JSON.stringify(analysis));
+      log(`text done in ${((Date.now() - t0) / 1000).toFixed(0)}s: ${analysis.sections.length} sections`);
+    }
+    emit({ type: 'analysis', analysis });
+    if (!drawer) return;
+    const secs = visualSecs(analysis.sections);
+    const vkey = visualsKey(text, aboutMe, secs);
+    const vfile = join(cacheDir, `${vkey}.json`);
+    if (!force && existsSync(vfile)) return emit({ type: 'visuals', visuals: JSON.parse(readFileSync(vfile, 'utf8')) });
+    try {
+      const visuals = await drawer.finish(secs);
+      writeFileSync(vfile, JSON.stringify(visuals));
+      log(`visuals done in ${((Date.now() - t0) / 1000).toFixed(0)}s: ${visuals.sections.filter(Boolean).length}/${secs.length} drawn`);
+      emit({ type: 'visuals', visuals });
+    } catch (e) {
+      emit({ type: 'visuals', error: e.message });
+    }
+  }
+
+  // Streamed jobs are shared: a second request for the same chapter (say the
+  // prefetch and then the reader opening it) joins the running one.
+  const streams = new Map();
+  function explainJob(body) {
+    const { text, pageRange } = body;
+    if (!text || !Array.isArray(pageRange)) throw Object.assign(new Error('text and pageRange are required'), { status: 400 });
+    const key = createHash('sha256').update(JSON.stringify({ model, aboutMe: body.aboutMe || '', text, visuals: body.visuals !== false })).digest('hex');
+    let job = streams.get(key);
+    if (job && !body.force) return job;
+    job = { last: new Map(), subs: new Set() };
+    const emit = (ev) => {
+      job.last.set(ev.type, ev);
+      for (const f of job.subs) f(ev);
+    };
+    job.done = explainPipeline(body, emit).finally(() => streams.get(key) === job && streams.delete(key));
+    job.done.catch(() => {});
+    streams.set(key, job);
     return job;
   }
 
@@ -204,6 +327,7 @@ export function createBridge({
     }
     const url = new URL(req.url, 'http://x');
     if (req.method === 'GET' && url.pathname === '/fetch') return proxyPdf(url.searchParams.get('url'), res, headers);
+    if (req.method === 'POST' && url.pathname === '/explain') return streamExplain(req, res, headers);
     const route = routes[`${req.method} ${url.pathname}`];
     if (!route) {
       if (req.method === 'GET' && serveStatic(url.pathname, res)) return;
@@ -219,6 +343,29 @@ export function createBridge({
       res.writeHead(e.status || 500, headers).end(JSON.stringify({ error: e.message }));
     }
   });
+
+  async function streamExplain(req, res, headers) {
+    let job;
+    try {
+      job = explainJob(await readBody(req));
+    } catch (e) {
+      res.writeHead(e.status || 500, headers).end(JSON.stringify({ error: e.message }));
+      return;
+    }
+    res.writeHead(200, { ...headers, 'content-type': 'application/x-ndjson', 'cache-control': 'no-store' });
+    res.flushHeaders?.();
+    const write = (ev) => res.write(JSON.stringify(ev) + '\n');
+    for (const ev of job.last.values()) write(ev);
+    job.subs.add(write);
+    res.on('close', () => job.subs.delete(write));
+    job.done.then(
+      () => write({ type: 'end' }),
+      (e) => { log(`error: ${e.message}`); write({ type: 'error', error: e.message }); },
+    ).finally(() => {
+      job.subs.delete(write);
+      res.end();
+    });
+  }
 
   // Downloads a PDF for the web app (pages cannot fetch other sites' files).
   async function proxyPdf(target, res, headers) {

@@ -28,6 +28,8 @@ const state = {
   listings: null, // [{title, language, page, code}] code found in the chapter
   listingsBusy: false,
   listingsError: '',
+  progress: null, // while explaining: {phase: 'reading'|'writing'|'drawing', sections, drawn, startedAt}
+  prefetching: new Set(), // chapters being explained in the background
   anchors: [], // per section: [{page, rects}] in the current layout
   pages: new Map(), // page index -> {wrap, pageEl, hlSvg, inkSvg, nodes, text, width, height}
   zoom: 1,
@@ -52,6 +54,7 @@ function docMessage() {
     analysis: state.analysis, anchored: state.anchors.map((a) => a.length > 0), section: state.section, mode: state.mode, busy: state.busy,
     visuals: state.visuals, visualBusy: state.visualBusy, visualError: state.visualError,
     listings: state.listings, listingsBusy: state.listingsBusy, listingsError: state.listingsError,
+    progress: state.progress, prefetching: [...state.prefetching],
   };
 }
 
@@ -174,8 +177,7 @@ async function renderCanvas(i) {
   await page.render({ canvas, canvasContext: canvas.getContext('2d'), viewport: vp, transform: ratio !== 1 ? [ratio, 0, 0, ratio, 0, 0] : null }).promise;
 }
 
-async function buildPage(i, token) {
-  const page = await state.pdf.getPage(i + 1);
+async function buildPage(i, token, page, tc) {
   if (token !== state.renderToken) return;
   const vp = page.getViewport({ scale: state.scale });
   const wrap = document.createElement('div');
@@ -202,7 +204,6 @@ async function buildPage(i, token) {
   wrap.append(pageEl, inkSvg);
   $('pages').appendChild(wrap);
 
-  const tc = await page.getTextContent();
   const layer = new pdfjsLib.TextLayer({ textContentSource: tc, container: textLayerEl, viewport: vp });
   await layer.render();
   const text = tc.items.map((it) => (it.str || '') + (it.hasEOL ? '\n' : '')).join('');
@@ -212,6 +213,14 @@ async function buildPage(i, token) {
 }
 
 async function showChapter(index, { section = 0 } = {}) {
+  if (index !== state.chapter) {
+    // A running explanation keeps going in the background (and is saved); this chapter starts free.
+    state.job = null;
+    state.busy = false;
+    state.visualBusy = false;
+    state.progress = null;
+    $('explain').disabled = false;
+  }
   state.chapter = index;
   state.renderToken = Symbol('render');
   const token = state.renderToken;
@@ -227,8 +236,14 @@ async function showChapter(index, { section = 0 } = {}) {
   $('main').scrollTop = 0;
   status(`Rendering pages ${ch.start + 1}-${ch.end + 1}…`, 'busy');
   state.scale = fitScale(await state.pdf.getPage(ch.start + 1));
-  for (let i = ch.start; i <= ch.end; i++) {
-    await buildPage(i, token);
+  // Fetch every page and its text at once, then lay them out in order.
+  const loaded = await Promise.all(Array.from({ length: ch.end - ch.start + 1 }, async (_, k) => {
+    const page = await state.pdf.getPage(ch.start + k + 1);
+    return [page, await page.getTextContent()];
+  }));
+  if (token !== state.renderToken) return;
+  for (let k = 0; k < loaded.length; k++) {
+    await buildPage(ch.start + k, token, ...loaded[k]);
     if (token !== state.renderToken) return;
   }
   const end = document.createElement('div');
@@ -251,13 +266,14 @@ async function showChapter(index, { section = 0 } = {}) {
   state.noText = chars < 40 * (ch.end - ch.start + 1);
   drawAnnotations();
   $('explain').textContent = state.analysis ? 'Re-explain' : 'Explain chapter';
+  $('explain').className = state.analysis ? 'quiet' : 'primary';
   status(state.noText ? 'No text layer in these pages: this PDF needs OCR first.' : state.analysis ? `${state.analysis.sections.length} sections explained` : 'Ready', state.noText ? 'error' : '');
   $('explain').disabled = state.noText;
   send(docMessage());
   if (state.analysis && state.section > 0) focusSection(state.section, { scroll: true });
-  if (state.autoExplain && !state.analysis && !state.noText) {
+  if ((state.autoExplain || state.prefetching.has(index)) && !state.analysis && !state.noText) {
     state.autoExplain = false;
-    explain();
+    explain(); // joins the background job if one is running
   } else if (state.analysis && !state.visuals && (await getState()).view === 'visual') visualize();
 }
 
@@ -343,47 +359,145 @@ function chapterText(ch) {
   return parts.join('\n\n');
 }
 
-async function storySoFar() {
+// Text of any chapter, rendered or not (for prefetching the next one).
+async function chapterTextOf(index) {
+  const ch = state.source.chapters[index];
+  if (index === state.chapter) return chapterText(ch);
+  const parts = await Promise.all(Array.from({ length: ch.end - ch.start + 1 }, async (_, k) => {
+    const page = await state.pdf.getPage(ch.start + k + 1);
+    const tc = await page.getTextContent();
+    return `[[p ${ch.start + k + 1}]]\n${tc.items.map((it) => (it.str || '') + (it.hasEOL ? '\n' : '')).join('')}`;
+  }));
+  return parts.join('\n\n');
+}
+
+async function storySoFar(chapter = state.chapter) {
   const out = [];
-  for (let i = Math.max(0, state.chapter - 6); i < state.chapter; i++) {
+  for (let i = Math.max(0, chapter - 6); i < chapter; i++) {
     const a = await getAnalysis(state.id, i);
     if (a?.summary) out.push(`- Chapter ${i + 1} (${state.source.chapters[i].title}): ${a.summary}`);
   }
   return out.join('\n');
 }
 
+// Streams the explanation: sections appear on the PDF and in the panel as Claude
+// finishes each one, and whiteboards are drawn for them in parallel.
 async function explain({ force = false } = {}) {
   if (state.busy || state.noText) return;
-  const ch = state.source.chapters[state.chapter];
   const chapter = state.chapter;
+  const ch = state.source.chapters[chapter];
+  const job = (state.job = Symbol('explain'));
   state.busy = true;
+  state.progress = { phase: 'reading', sections: 0, drawn: 0, startedAt: Date.now() };
   $('explain').disabled = true;
-  status('Claude is reading the chapter… (usually 1-3 min)', 'busy');
+  $('explain').textContent = 'Explaining…';
+  status('Claude is reading the chapter…', 'busy');
+  send(docMessage());
+  let last = 0;
+  const here = () => chapter === state.chapter && state.job === job;
+  const push = () => {
+    if (Date.now() - last < 150) return;
+    last = Date.now();
+    send(docMessage());
+  };
+  try {
+    const { aboutMe, view } = await getState();
+    state.visuals = null;
+    state.visualError = '';
+    let final = null;
+    await bridge.explain({
+      sourceTitle: state.source.title, chapterTitle: ch.title, pageRange: [ch.start + 1, ch.end + 1],
+      text: chapterText(ch), storySoFar: await storySoFar(), aboutMe, force, visuals: view !== 'text',
+    }, async (ev) => {
+      // Finished results are saved even if you moved to another chapter meanwhile.
+      if (!here()) {
+        if (ev.type === 'analysis' && !ev.partial) {
+          await putAnalysis(state.id, chapter, ev.analysis);
+          await addGlossary(ev.analysis.glossary, state.source.title);
+        } else if (ev.type === 'visuals' && !ev.partial && ev.visuals) await putVisuals(state.id, chapter, ev.visuals);
+        return;
+      }
+      if (ev.type === 'analysis') {
+        const a = ev.analysis;
+        const grew = a.sections.length !== state.analysis?.sections.length;
+        state.analysis = a;
+        state.progress = { ...state.progress, phase: ev.partial ? 'writing' : 'drawing', sections: a.sections.length };
+        if (ev.partial) {
+          status(`Writing section ${a.sections.length + 1}…`, 'busy');
+          if (grew) drawAnnotations({ animateSection: state.mode === 'walk' ? -1 : a.sections.length - 1 });
+        } else {
+          final = a;
+          await putAnalysis(state.id, chapter, a);
+          await addGlossary(a.glossary, state.source.title);
+          drawAnnotations();
+          const missing = state.anchors.filter((f) => !f.length).length;
+          status(`${a.sections.length} sections explained${missing ? `, ${missing} without a highlight` : ''}`);
+          $('explain').textContent = 'Re-explain';
+          $('explain').className = 'quiet';
+          state.busy = false;
+          state.visualBusy = view !== 'text';
+          $('explain').disabled = false;
+        }
+        send(docMessage());
+        last = Date.now();
+      } else if (ev.type === 'visuals') {
+        if (ev.error) state.visualError = ev.error;
+        else {
+          state.visuals = ev.visuals;
+          state.progress = { ...state.progress, drawn: ev.visuals.sections.filter(Boolean).length };
+          if (!ev.partial) {
+            await putVisuals(state.id, chapter, ev.visuals);
+            state.visualBusy = false;
+          }
+        }
+        if (ev.partial) push();
+        else send(docMessage());
+      }
+    });
+    if (final) prefetch(chapter + 1);
+  } catch (e) {
+    if (here()) {
+      status(e.message, 'error');
+      if (!state.analysis?.glossary?.length && state.analysis?.buildCard === null) state.analysis = (await getAnalysis(state.id, chapter)) || null;
+    }
+  } finally {
+    if (here()) {
+      state.busy = false;
+      state.visualBusy = false;
+      state.progress = null;
+      $('explain').disabled = false;
+      $('explain').textContent = state.analysis ? 'Re-explain' : 'Explain chapter';
+      $('explain').className = state.analysis ? 'quiet' : 'primary';
+      drawAnnotations();
+      send(docMessage());
+    }
+  }
+}
+
+// Explains the next chapter in the background so it is ready when you get there.
+async function prefetch(index) {
+  if (index >= state.source.chapters.length || state.prefetching.has(index)) return;
+  if (await getAnalysis(state.id, index)) return;
+  state.prefetching.add(index);
   send(docMessage());
   try {
-    const { aboutMe } = await getState();
-    const res = await bridge.analyze({
+    const ch = state.source.chapters[index];
+    const { aboutMe, view } = await getState();
+    const text = await chapterTextOf(index);
+    if (text.replace(/\[\[p \d+\]\]/g, '').trim().length < 40 * (ch.end - ch.start + 1)) return;
+    await bridge.explain({
       sourceTitle: state.source.title, chapterTitle: ch.title, pageRange: [ch.start + 1, ch.end + 1],
-      text: chapterText(ch), storySoFar: await storySoFar(), aboutMe, force,
+      text, storySoFar: await storySoFar(index), aboutMe, visuals: view !== 'text',
+    }, async (ev) => {
+      if (ev.type === 'analysis' && !ev.partial) {
+        await putAnalysis(state.id, index, ev.analysis);
+        await addGlossary(ev.analysis.glossary, state.source.title);
+      } else if (ev.type === 'visuals' && !ev.partial && ev.visuals) await putVisuals(state.id, index, ev.visuals);
     });
-    delete res.cached;
-    await putAnalysis(state.id, chapter, res);
-    await addGlossary(res.glossary, state.source.title);
-    if (chapter !== state.chapter) return;
-    state.analysis = res;
-    state.section = 0;
-    drawAnnotations({ animateSection: state.mode === 'walk' ? 0 : -1 });
-    const missing = state.anchors.filter((f) => !f.length).length;
-    status(`${res.sections.length} sections explained${missing ? `, ${missing} without a highlight` : ''}`);
-    $('explain').textContent = 'Re-explain';
-    if (state.mode === 'walk') focusSection(0);
-    state.visuals = null;
-    visualize({ force });
   } catch (e) {
-    status(e.message, 'error');
+    console.warn('prefetch failed', e);
   } finally {
-    state.busy = false;
-    $('explain').disabled = false;
+    state.prefetching.delete(index);
     send(docMessage());
   }
 }

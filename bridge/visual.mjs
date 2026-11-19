@@ -83,6 +83,11 @@ export const VISUAL_SCHEMA = {
   },
 };
 
+// Parallel drawing: sections are drawn in small batches at once, the concept map
+// in its own small call, so whiteboards appear while the chapter is still being explained.
+export const VISUAL_SECTIONS_SCHEMA = { type: 'object', additionalProperties: false, required: ['sections'], properties: { sections: VISUAL_SCHEMA.properties.sections } };
+export const MAP_SCHEMA = { type: 'object', additionalProperties: false, required: ['map'], properties: { map: VISUAL_SCHEMA.properties.map } };
+
 const str = (v, max = 200) => (typeof v === 'string' ? v.trim().slice(0, max) : '');
 const words = (s, n) => s.split(/\s+/).filter(Boolean).slice(0, n).join(' ');
 
@@ -155,26 +160,7 @@ export function validateVisuals(raw, sectionCount) {
   return { map: nodes.length >= 2 ? { nodes, links } : null, sections };
 }
 
-export function visualPrompt({ aboutMe, sourceTitle, chapterTitle, sections, text }) {
-  const list = sections.map((s, i) => `### Section ${i}: ${s.title} (p. ${s.page})\n${s.explanation}`).join('\n\n');
-  return `Reader: ${aboutMe}
-
-Source: "${sourceTitle}". Chapter: "${chapterTitle}".
-
-The reader learns best from pictures, not paragraphs. The chapter was already explained in words, section by section:
-
-<sections>
-${list}
-</sections>
-
-The original chapter text, for exact names, numbers and formulas:
-<chapter>
-${text}
-</chapter>
-
-Turn every section into a whiteboard drawing that a tutor would sketch while talking, plus one concept map of the whole chapter. Return JSON matching the schema.
-
-sections: one entry per section above, section = its number (0-based). For each:
+const SECTION_RULES = `sections: one entry per section above, section = its number (0-based). For each:
 - kind: the picture that explains THIS idea best:
   - flow: data or work moving through steps (A -> B -> C). Items in order; links for the arrows (label = what moves).
   - stack: layers built on each other. First item = bottom layer. value = how many times it repeats (e.g. 6), else 0.
@@ -188,9 +174,70 @@ sections: one entry per section above, section = its number (0-based). For each:
 - groups: for compare, exactly 2 ({id, label}); otherwise [].
 - links: arrows between item ids, with a 1-3 word label or "". For flow and cycle give the arrows explicitly. Otherwise [] unless an arrow really helps.
 - steps: 2 to 5 steps that build the picture up like a tutor drawing it. show = the item ids that appear at this step (each id in exactly one step). caption = what the tutor says at this step, at most 14 words, plain and concrete, no jargon left undefined.
-- oneLiner: the whole idea in at most 16 words.
+- oneLiner: the whole idea in at most 16 words.`;
 
-map: the chapter's main ideas as a concept map, 4 to 10 nodes. id short and unique, label 1 to 4 words, section = the section number where the idea is explained (or -1). links: how the ideas connect, label 1 to 3 words ("feeds", "replaces", "made of", "needs"). It should read top-down from the big idea to its parts.
+const MAP_RULES = `map: the chapter's main ideas as a concept map, 4 to 10 nodes. id short and unique, label 1 to 4 words, section = the section number where the idea is explained (or -1). links: how the ideas connect, label 1 to 3 words ("feeds", "replaces", "made of", "needs"). It should read top-down from the big idea to its parts.`;
+
+const sectionList = (sections, offset = 0) => sections.map((s, i) => `### Section ${i + offset}: ${s.title} (p. ${s.page})\n${s.explanation}`).join('\n\n');
+
+export function visualPrompt({ aboutMe, sourceTitle, chapterTitle, sections, text }) {
+  return `Reader: ${aboutMe}
+
+Source: "${sourceTitle}". Chapter: "${chapterTitle}".
+
+The reader learns best from pictures, not paragraphs. The chapter was already explained in words, section by section:
+
+<sections>
+${sectionList(sections)}
+</sections>
+
+The original chapter text, for exact names, numbers and formulas:
+<chapter>
+${text}
+</chapter>
+
+Turn every section into a whiteboard drawing that a tutor would sketch while talking, plus one concept map of the whole chapter. Return JSON matching the schema.
+
+${SECTION_RULES}
+
+${MAP_RULES}
 
 Keep every label short: they are drawn by hand in a narrow panel. No em dashes.`;
+}
+
+// Draws only sections [offset, offset + sections.length). The chapter text comes
+// first so the calls of one chapter share a prompt prefix.
+export function visualBatchPrompt({ aboutMe, sourceTitle, chapterTitle, sections, offset, text }) {
+  return `The original chapter text, for exact names, numbers and formulas:
+<chapter>
+${text}
+</chapter>
+
+Reader: ${aboutMe}
+
+Source: "${sourceTitle}". Chapter: "${chapterTitle}".
+
+The reader learns best from pictures, not paragraphs. These sections of the chapter were already explained in words:
+
+<sections>
+${sectionList(sections, offset)}
+</sections>
+
+Turn each of these sections (numbers ${offset} to ${offset + sections.length - 1}) into a whiteboard drawing that a tutor would sketch while talking. Return JSON matching the schema.
+
+${SECTION_RULES}
+
+Keep every label short: they are drawn by hand in a narrow panel. No em dashes.`;
+}
+
+export function mapPrompt({ sourceTitle, chapterTitle, sections }) {
+  return `Source: "${sourceTitle}". Chapter: "${chapterTitle}". Its sections:
+
+${sections.map((s, i) => `${i}. ${s.title}: ${String(s.explanation || '').split(/(?<=[.!?])\s/)[0]}`).join('\n')}
+
+Return JSON matching the schema.
+
+${MAP_RULES}
+
+Labels are drawn by hand in a narrow panel, so keep them short. No em dashes.`;
 }

@@ -36,7 +36,7 @@ await viewer.screenshot({ path: join(out, '1-viewer-loaded.png') });
 
 const t0 = Date.now();
 await panel.bringToFront();
-await panel.click('#explain');
+await panel.click('#explain-cta');
 await viewer.waitForFunction(() => /explained|error|offline|Claude error/i.test(document.getElementById('status').textContent), null, { timeout: 8 * 60 * 1000, polling: 2000 });
 console.log(`explain took ${((Date.now() - t0) / 1000).toFixed(0)}s:`, await viewer.textContent('#status'));
 

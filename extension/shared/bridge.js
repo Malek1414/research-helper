@@ -21,3 +21,34 @@ export const trace = (body) => call('/trace', body);
 export const listings = (body) => call('/listings', body);
 export const ask = (body) => call('/ask', body);
 export const exportChapter = (body) => call('/export', body);
+
+// Streams /explain: onEvent({type: 'analysis'|'visuals'|'error'|'end', ...}) for
+// each NDJSON line. Resolves when the stream ends.
+export async function explain(body, onEvent) {
+  let res;
+  try {
+    res = await fetch(BRIDGE + '/explain', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
+  } catch {
+    throw Object.assign(new Error(`Bridge is offline. Start it with: ${START_CMD}`), { offline: true });
+  }
+  if (!res.ok || !res.body) {
+    const data = await res.json().catch(() => ({}));
+    throw new Error(data.error || `bridge error ${res.status}`);
+  }
+  const reader = res.body.pipeThrough(new TextDecoderStream()).getReader();
+  let buf = '';
+  for (;;) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    buf += value;
+    let nl;
+    while ((nl = buf.indexOf('\n')) >= 0) {
+      const line = buf.slice(0, nl).trim();
+      buf = buf.slice(nl + 1);
+      if (!line) continue;
+      const ev = JSON.parse(line);
+      if (ev.type === 'error') throw new Error(ev.error);
+      onEvent(ev);
+    }
+  }
+}

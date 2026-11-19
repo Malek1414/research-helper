@@ -7,85 +7,110 @@
 </head>
 <body>
   <header class="top">
-    <div class="brand"><span class="logo">RH</span> Research Helper</div>
-    <span id="bridge" class="bridge" title="Local Claude bridge">bridge</span>
+    <button id="lib-btn" class="lib-btn" title="Library">
+      <span class="logo">RH</span>
+      <span class="lib-title" id="src-title">Research Helper</span>
+      <svg class="chev" viewBox="0 0 12 12" aria-hidden="true"><path d="M3 4.5 6 7.5 9 4.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
+    </button>
+    <span id="bridge" class="bridge" title="Local Claude bridge"></span>
+    <div class="menu-wrap">
+      <button id="menu-btn" class="icon" title="More" aria-haspopup="menu">
+        <svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="3" cy="8" r="1.4"/><circle cx="8" cy="8" r="1.4"/><circle cx="13" cy="8" r="1.4"/></svg>
+      </button>
+      <div id="menu" class="menu" role="menu" hidden>
+        <button id="explain" role="menuitem">Re-explain chapter</button>
+        <button id="redraw" role="menuitem">Redraw pictures</button>
+        <button id="rotate" role="menuitem">Rotate to next source</button>
+        <button id="open-settings" role="menuitem">About me…</button>
+      </div>
+    </div>
   </header>
 
   <div id="offline" class="offline" hidden>
-    Bridge offline. In a terminal run:
+    <b>Bridge offline.</b> In a terminal run
     <code id="start-cmd"></code>
-    <button id="copy-cmd" class="ghost small">Copy</button>
+    <button id="copy-cmd" class="small">Copy command</button>
   </div>
 
   <section id="source" hidden>
-    <div class="source-head">
-      <div class="source-title" id="src-title"></div>
-      <button id="rotate" class="ghost small" title="Next unfinished chapter of the next source">↻ Rotate</button>
+    <div class="chapter-row">
+      <button id="chapter-btn" class="chapter-btn" aria-haspopup="listbox">
+        <span class="ch-no" id="ch-no"></span>
+        <span class="ch-title" id="chapter-summary"></span>
+        <svg class="chev" viewBox="0 0 12 12" aria-hidden="true"><path d="M3 4.5 6 7.5 9 4.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
+      </button>
+      <span class="ctx-label" id="src-label"></span>
     </div>
-    <div class="ctx">
-      <div class="ctx-bar" id="src-bar"></div>
-      <div class="ctx-label" id="src-label"></div>
-    </div>
-    <details id="chapters-box">
-      <summary id="chapter-summary"></summary>
-      <ol id="chapters"></ol>
-    </details>
+    <div class="ctx-bar" id="src-bar"></div>
+    <ol id="chapters" class="chapters" hidden></ol>
 
-    <div class="row">
+    <div class="toolbar">
+      <div class="seg" role="tablist" aria-label="View">
+        <button data-view="visual" title="Pictures first, words on demand">
+          <svg viewBox="0 0 16 16" aria-hidden="true"><rect x="1.5" y="2.5" width="13" height="11" rx="2" fill="none" stroke="currentColor" stroke-width="1.4"/><path d="M4 10.5 6.5 7.5 8.5 9.5 10.5 6.5 12.5 10.5" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/></svg>Visual</button>
+        <button data-view="text" title="Full explanations in words">
+          <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2.5 4h11M2.5 7h11M2.5 10h8M2.5 13h6" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>Text</button>
+      </div>
       <div class="seg" role="tablist" aria-label="Mode">
-        <button data-mode="annotate">Annotate all</button>
-        <button data-mode="walk">Guided walk</button>
+        <button data-mode="annotate" title="Every highlight and note at once">All</button>
+        <button data-mode="walk" title="One section at a time">Walk</button>
       </div>
-      <button id="explain" class="primary">Explain chapter</button>
     </div>
-    <div class="row view-row">
-      <div class="seg view" role="tablist" aria-label="View">
-        <button data-view="visual">Visual</button>
-        <button data-view="text">Text</button>
-      </div>
-      <span class="view-hint" id="view-hint"></span>
+
+    <div id="progress" class="progress" hidden>
+      <div class="progress-row"><span class="spinner"></span><span id="progress-text"></span><span id="progress-time" class="progress-time"></span></div>
+      <div class="progress-track"><span id="progress-fill"></span></div>
     </div>
     <div id="status" class="status"></div>
 
     <nav class="tabs" role="tablist">
-      <button data-tab="walk" class="on">Walkthrough</button>
-      <button data-tab="build">Build card</button>
+      <button data-tab="walk" class="on">Learn</button>
+      <button data-tab="build">Build</button>
       <button data-tab="code">Code</button>
-      <button data-tab="gloss">Glossary</button>
+      <button data-tab="gloss">Terms</button>
     </nav>
 
     <div id="tab-walk" class="tab"></div>
     <div id="tab-build" class="tab" hidden></div>
     <div id="tab-code" class="tab" hidden></div>
     <div id="tab-gloss" class="tab" hidden>
-      <input id="gloss-filter" type="search" placeholder="Search all terms">
+      <input id="gloss-filter" type="search" placeholder="Search every term you have met">
       <div id="gloss-list"></div>
     </div>
   </section>
 
   <section id="welcome" class="welcome" hidden>
-    <h2>Read hard things, then build them.</h2>
-    <p>Add a paper or a book. Research Helper splits it into chapters, highlights what matters, scribbles notes on the hard parts and explains it in plain words.</p>
+    <div class="welcome-mark">RH</div>
+    <h2>Read hard things,<br>then build them.</h2>
+    <p>Add a paper or a book. Research Helper splits it into chapters, highlights what matters, scribbles notes on the hard parts and draws each idea as a picture.</p>
+    <button id="welcome-add" class="primary">Add your first PDF</button>
   </section>
 
-  <section class="library">
-    <div class="lib-head">
+  <div id="scrim" class="scrim" hidden></div>
+  <aside id="drawer" class="drawer" aria-label="Library" hidden>
+    <div class="drawer-head">
       <h3>Library</h3>
-      <label class="ghost small file-btn">+ Add PDF<input id="file" type="file" accept="application/pdf,.pdf" hidden></label>
+      <button id="drawer-close" class="icon" title="Close">
+        <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
+      </button>
     </div>
-    <button id="this-tab" class="wide" hidden>Open this tab's PDF here</button>
-    <form id="url-form" class="url-form">
-      <input id="url" type="url" placeholder="Paste a PDF link (arXiv, docs…)">
-      <button class="small">Add</button>
-    </form>
+    <div class="add-box">
+      <label class="file-btn primary-btn">Upload a PDF<input id="file" type="file" accept="application/pdf,.pdf" hidden></label>
+      <form id="url-form" class="url-form">
+        <input id="url" type="url" placeholder="…or paste a link (arXiv, docs)">
+        <button class="small">Add</button>
+      </form>
+      <button id="this-tab" class="wide small" hidden>Open this tab's PDF here</button>
+      <div id="lib-status" class="status"></div>
+    </div>
     <ul id="sources"></ul>
-  </section>
-
-  <details class="settings">
-    <summary>About me (how explanations are pitched)</summary>
-    <textarea id="about" rows="6"></textarea>
-    <button id="save-about" class="small">Save</button>
-  </details>
+    <details id="settings" class="settings">
+      <summary>About me</summary>
+      <p class="hint">How explanations are pitched: your background, what you build.</p>
+      <textarea id="about" rows="6"></textarea>
+      <button id="save-about" class="small">Save</button>
+    </details>
+  </aside>
 
   <script type="module" src="panel.js"></script>
 </body>
