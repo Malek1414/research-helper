@@ -182,7 +182,7 @@ function renderWalk(src, chapter, a, doc, mode, visuals) {
     const cls = `sec ${i === cur ? 'on' : ''} ${i >= seen ? 'fresh' : ''}`;
     if (v) {
       return `
-      <article class="${cls}" data-section="${i}">
+      <article class="${cls}" data-section="${i}" style="--c: var(--c${i % 6})">
         ${meta}
         <div class="sec-head"><p class="q">${esc(s.title)}</p><h2>${esc(v.oneLiner || s.title)}</h2></div>
         <div class="wb" data-wb="${i}"></div>
@@ -199,7 +199,7 @@ function renderWalk(src, chapter, a, doc, mode, visuals) {
       </article>`;
     }
     return `
-      <article class="${cls} text" data-section="${i}">
+      <article class="${cls} text" data-section="${i}" style="--c: var(--c${i % 6})">
         ${meta}
         <div class="sec-head"><h2>${esc(s.title)}</h2></div>
         ${s.note ? `<div class="note-hand">${esc(s.note)}</div>` : ''}

@@ -3,7 +3,7 @@
 import rough from '../vendor/rough.esm.js';
 import { findQuote } from '../shared/anchor.js';
 
-export const INK = '#C8102E';
+export const INK = '#F0163A';
 const HL = { 1: 'rgba(255, 221, 87, .55)', 2: 'rgba(255, 221, 87, .55)', 3: 'rgba(255, 180, 70, .5)', 4: 'rgba(255, 120, 140, .45)', 5: 'rgba(255, 120, 140, .45)' };
 const SVGNS = 'http://www.w3.org/2000/svg';
 

@@ -4,9 +4,9 @@ import rough from '../vendor/rough.esm.js';
 
 const NS = 'http://www.w3.org/2000/svg';
 const INK = '#1F1D1C';
-const RED = '#CC3B52';
+const RED = '#FF3B4E';
 const DIM = '#6E6B68';
-const TONES = ['#EBA9B4', '#CFC8BE', '#F2C6CD', '#BFB8AE', '#E0909D', '#DDD6CC', '#F5D3D8', '#C8C1B7'];
+const TONES = ['#FFD60A', '#FF8A2A', '#FF5C8A', '#2EC5FF', '#3DDC84', '#A779FF', '#FFD60A', '#FF8A2A'];
 
 function el(tag, attrs, parent) {
   const n = document.createElementNS(NS, tag);

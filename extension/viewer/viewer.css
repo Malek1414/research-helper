@@ -9,8 +9,8 @@
   --fg: #F5F3F0;
   --mut: #A9A6A2;
   --muted: #6E6B68;
-  --red: #CC3B52;
-  --maroon: #5C1E29;
+  --red: #FF4D5E;
+  --maroon: #FF4D5E;
   --line: #2C2C30;
 }
 * { box-sizing: border-box; }
@@ -20,14 +20,14 @@ html, body { margin: 0; height: 100%; background: var(--bg); color: var(--fg); f
 #bar .left, #bar .mid, #bar .right { display: flex; align-items: center; gap: 14px; min-width: 0; }
 #bar .left { flex: 1; }
 #bar .right { flex: 1; justify-content: flex-end; }
-.logo { font-family: 'Inter Tight', sans-serif; font-weight: 800; font-size: 13px; letter-spacing: -.02em; color: var(--red); flex: none; }
+.logo { font-family: 'Inter Tight', sans-serif; font-weight: 800; font-size: 13px; letter-spacing: -.02em; background: linear-gradient(90deg, #FF4D5E, #FFC93C); -webkit-background-clip: text; background-clip: text; color: transparent; flex: none; }
 #title { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-family: 'Inter Tight', sans-serif; font-weight: 700; font-size: 15px; letter-spacing: -.02em; }
 button, select { font: inherit; color: var(--mut); background: none; border: 0; border-radius: 0; height: 30px; padding: 0; cursor: pointer; transition: color .15s, background .15s; }
 button:hover, select:hover { color: var(--fg); }
 button:focus-visible, select:focus-visible { outline: 1px solid var(--red); outline-offset: 3px; }
 button:disabled { opacity: .3; cursor: default; }
-button.primary { background: var(--fg); color: var(--bg); font-weight: 600; padding: 0 16px; }
-button.primary:hover { background: #fff; }
+button.primary { background: #FFC93C; color: var(--bg); font-weight: 600; padding: 0 16px; }
+button.primary:hover { background: #FFD966; }
 button.quiet, #panel { font-size: 10.5px; font-weight: 600; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); }
 button.quiet:hover, #panel:hover { color: var(--fg); }
 .group { display: inline-flex; gap: 2px; }
@@ -60,7 +60,7 @@ select option { background: #111113; color: var(--fg); }
 .gutter-bg { position: absolute; top: 0; height: 100%; background: #F7F3EA; border-left: 1px solid #E4B5BD; }
 
 .chapter-end { display: flex; gap: 12px; align-items: center; color: var(--muted); padding: 22px 0; }
-.chapter-end button { background: var(--fg); color: var(--bg); font-weight: 600; padding: 0 16px; }
+.chapter-end button { background: #FFC93C; color: var(--bg); font-weight: 600; padding: 0 16px; }
 
 /* localhost web app: the panel is always beside the viewer */
 .rh-web #panel { display: none; }
