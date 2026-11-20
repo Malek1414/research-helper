@@ -229,6 +229,9 @@ test('requests through a tunnel need the pairing token', async () => {
     assert.equal(pair.status, 302);
     assert.match(pair.headers.get('set-cookie'), /rh_t=secret-token;.*HttpOnly.*Secure/);
     assert.equal((await fetch(`${base}/health`, { headers: { ...fwd, cookie: 'rh_t=secret-token' } })).status, 200);
+    const host = new URL(base).host;
+    const ask = await fetch(`${base}/ask`, { method: 'POST', headers: { ...fwd, cookie: 'rh_t=secret-token', origin: `https://${host}`, 'content-type': 'application/json' }, body: JSON.stringify({ question: 'q' }) });
+    assert.equal(ask.status, 200); // the page itself, served over https by the tunnel
     assert.equal((await fetch(`${base}/health`)).status, 200); // this Mac itself
   }, { lanToken: 'secret-token' });
 });

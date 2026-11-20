@@ -332,7 +332,7 @@ export function createBridge({
       return;
     }
     const origin = req.headers.origin;
-    const ownOrigin = origin && own.some((h) => origin === `http://${h}`);
+    const ownOrigin = origin && own.some((h) => origin === `http://${h}` || (remote && origin === `https://${h}`));
     if (origin && !ownOrigin && !origin.startsWith('chrome-extension://')) {
       res.writeHead(403).end();
       return;
