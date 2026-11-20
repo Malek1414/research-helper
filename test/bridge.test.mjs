@@ -218,3 +218,17 @@ test('explain streams partial sections, draws visuals in parallel batches and ca
     assert.equal(runs.length, before);
   }, { run });
 });
+
+test('requests through a tunnel need the pairing token', async () => {
+  await withBridge(async ({ base }) => {
+    const fwd = { 'x-forwarded-for': '203.0.113.9', 'x-forwarded-proto': 'https' };
+    assert.equal((await fetch(`${base}/health`, { headers: fwd })).status, 401);
+    assert.equal((await fetch(`${base}/health`, { headers: { ...fwd, cookie: 'rh_t=wrong-token-xx' } })).status, 401);
+    assert.equal((await fetch(`${base}/pair?t=nope`, { headers: fwd, redirect: 'manual' })).status, 401);
+    const pair = await fetch(`${base}/pair?t=secret-token&next=mobile`, { headers: fwd, redirect: 'manual' });
+    assert.equal(pair.status, 302);
+    assert.match(pair.headers.get('set-cookie'), /rh_t=secret-token;.*HttpOnly.*Secure/);
+    assert.equal((await fetch(`${base}/health`, { headers: { ...fwd, cookie: 'rh_t=secret-token' } })).status, 200);
+    assert.equal((await fetch(`${base}/health`)).status, 200); // this Mac itself
+  }, { lanToken: 'secret-token' });
+});

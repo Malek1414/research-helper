@@ -308,7 +308,11 @@ export function createBridge({
   const server = createHttpServer(async (req, res) => {
     const port = server.address().port;
     const own = [`127.0.0.1:${port}`, `localhost:${port}`];
-    const remote = !isLoopback(req.socket.remoteAddress);
+    // Through a tunnel (Tailscale Funnel, Cloudflare) requests arrive from loopback
+    // but come from the internet: the forwarding headers give them away.
+    const proxied = ['x-forwarded-for', 'cf-connecting-ip', 'tailscale-funnel-request', 'forwarded'].some((h) => req.headers[h]);
+    const remote = proxied || !isLoopback(req.socket.remoteAddress);
+    const secure = req.headers['x-forwarded-proto'] === 'https' ? '; Secure' : '';
     if (remote && process.env.RH_DEBUG) log(`lan ${req.method} ${req.url.replace(/t=[^&]+/, 't=…')}`);
     if (remote) {
       // Another device (the iPhone app): only in LAN mode and only with the token.
@@ -316,7 +320,7 @@ export function createBridge({
       const url = new URL(req.url, 'http://x');
       if (req.method === 'GET' && url.pathname === '/pair') {
         if (!sameToken(url.searchParams.get('t'), lanToken)) return void res.writeHead(401).end('wrong pairing code');
-        res.writeHead(302, { 'set-cookie': `rh_t=${lanToken}; Path=/; HttpOnly; SameSite=Strict; Max-Age=31536000`, location: url.searchParams.get('next') === 'mobile' ? '/m' : '/' }).end();
+        res.writeHead(302, { 'set-cookie': `rh_t=${lanToken}; Path=/; HttpOnly; SameSite=Lax; Max-Age=31536000${secure}`, location: url.searchParams.get('next') === 'mobile' ? '/m' : '/' }).end();
         return;
       }
       if (!sameToken(cookie(req, 'rh_t'), lanToken)) return void res.writeHead(401, { 'content-type': 'text/plain' }).end('Not paired. Open the Research Helper app and pair it with this Mac.');
@@ -347,6 +351,19 @@ export function createBridge({
     const url = new URL(req.url, 'http://x');
     if (req.method === 'GET' && url.pathname === '/fetch') return proxyPdf(url.searchParams.get('url'), res, headers);
     if (req.method === 'POST' && url.pathname === '/explain') return streamExplain(req, res, headers);
+    if (req.method === 'GET' && url.pathname === '/manifest.webmanifest') {
+      const start = remote && lanToken ? `/pair?t=${lanToken}&next=mobile` : '/m';
+      res.writeHead(200, { 'content-type': 'application/manifest+json', 'cache-control': 'no-store' }).end(JSON.stringify({
+        name: 'Research Helper', short_name: 'Research', description: 'Read hard papers, then build them.',
+        start_url: start, scope: '/', display: 'standalone', background_color: '#0B0B0C', theme_color: '#0B0B0C',
+        icons: [
+          { src: '/web/icons/icon-192.png', sizes: '192x192', type: 'image/png' },
+          { src: '/web/icons/icon-512.png', sizes: '512x512', type: 'image/png' },
+          { src: '/web/icons/icon-512.png', sizes: '512x512', type: 'image/png', purpose: 'maskable' },
+        ],
+      }));
+      return;
+    }
     const route = routes[`${req.method} ${url.pathname}`];
     if (!route) {
       if (req.method === 'GET' && serveStatic(url.pathname, res)) return;
@@ -475,7 +492,8 @@ export function lanAddress() {
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
   const lan = process.argv.includes('--lan') || process.env.RH_LAN === '1';
-  const token = lan ? mobileToken() : null;
+  // The token is always on, so the app is safe behind a tunnel (npm run phone).
+  const token = mobileToken();
   createBridge({ lanToken: token }).listen(PORT, lan ? '0.0.0.0' : '127.0.0.1', () => {
     console.log(`Research Helper on http://127.0.0.1:${PORT}  (web app + bridge for the extension, model: ${process.env.RH_MODEL || 'sonnet'})`);
     if (lan) {
