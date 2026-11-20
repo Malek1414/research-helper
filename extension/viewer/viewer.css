@@ -41,7 +41,7 @@ select option { background: #111113; color: var(--fg); }
 @keyframes pulse { 50% { opacity: .2; } }
 
 #main { position: absolute; inset: 52px 0 0 0; overflow: auto; }
-#pages { display: flex; flex-direction: column; align-items: center; gap: 18px; padding: 24px 0 120px; }
+#pages { display: flex; flex-direction: column; align-items: safe center; gap: 18px; padding: 24px 0 120px; }
 #empty { margin: 22vh auto; max-width: 480px; text-align: center; color: var(--mut); font-size: 15px; line-height: 1.6; }
 #empty b { color: var(--fg); }
 
@@ -64,3 +64,15 @@ select option { background: #111113; color: var(--fg); }
 
 /* localhost web app: the panel is always beside the viewer */
 .rh-web #panel { display: none; }
+
+/* Phones (mobile web app): one compact toolbar row, page fills the width. */
+@media (max-width: 700px) {
+  #bar { padding: 0 10px; gap: 8px; }
+  #bar .left, #status, #panel { display: none; }
+  #bar .mid { flex: 1; min-width: 0; gap: 4px; }
+  #bar .right { flex: none; gap: 8px; }
+  select { flex: 1; min-width: 0; max-width: none; font-size: 13px; }
+  #explain { padding: 0 10px; font-size: 12px; }
+  #pages { align-items: flex-start; padding: 12px 8px 120px; }
+  .page-num { display: none; }
+}

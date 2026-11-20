@@ -14,6 +14,7 @@ window.rhApp = {
   viewerUrl: () => viewer.src || new URL(VIEWER, location.origin).href,
   openUrl(url) {
     viewer.src = url;
+    window.rhApp.onOpen?.();
     const id = new URL(url).searchParams.get('id');
     if (id) document.title = 'Research Helper';
   },
@@ -26,32 +27,60 @@ function showError(msg) {
   setTimeout(() => (el.hidden = true), 12000);
 }
 
-// Resizable divider, remembered per browser.
-const split = document.getElementById('split');
-const handle = document.getElementById('handle');
-try {
-  const w = localStorage.getItem('rh-web:panel-w');
-  if (w) split.style.setProperty('--panel-w', w);
-} catch {}
-handle.addEventListener('pointerdown', (e) => {
-  handle.setPointerCapture(e.pointerId);
-  split.classList.add('dragging');
-  handle.classList.add('drag');
-});
-handle.addEventListener('pointermove', (e) => {
-  if (!handle.hasPointerCapture(e.pointerId)) return;
-  const w = `${Math.max(320, Math.min(window.innerWidth - 400, window.innerWidth - e.clientX))}px`;
-  split.style.setProperty('--panel-w', w);
-});
-handle.addEventListener('pointerup', (e) => {
-  handle.releasePointerCapture(e.pointerId);
-  split.classList.remove('dragging');
-  handle.classList.remove('drag');
-  try { localStorage.setItem('rh-web:panel-w', split.style.getPropertyValue('--panel-w')); } catch {}
-});
+const MOBILE = !document.getElementById('handle');
+if (MOBILE) setupTabs();
+else setupDivider();
+
+// Phone layout (web/mobile.html): Paper and Learn are two full-screen tabs.
+function setupTabs() {
+  const buttons = [...document.querySelectorAll('nav [data-go]')];
+  const show = (tab) => {
+    document.body.dataset.tab = tab;
+    buttons.forEach((b) => {
+      b.classList.toggle('on', b.dataset.go === tab);
+      if (b.dataset.go === tab) b.classList.remove('ping');
+    });
+    try { sessionStorage.setItem('rh-m:tab', tab); } catch {}
+  };
+  buttons.forEach((b) => b.addEventListener('click', () => show(b.dataset.go)));
+  // Opening a source from the library shows the paper; a tap on a highlight in
+  // the paper (the panel jumps to that section) pings the Learn tab.
+  window.rhApp.onOpen = () => show('read');
+  window.addEventListener('storage', (e) => {
+    if (document.body.dataset.tab === 'read' && /section|focus/i.test(e.key || '')) buttons.find((b) => b.dataset.go === 'learn')?.classList.add('ping');
+  });
+  try { const t = sessionStorage.getItem('rh-m:tab'); if (t) show(t); } catch {}
+}
+
+function setupDivider() {
+  // Resizable divider, remembered per browser.
+  const split = document.getElementById('split');
+  const handle = document.getElementById('handle');
+  try {
+    const w = localStorage.getItem('rh-web:panel-w');
+    if (w) split.style.setProperty('--panel-w', w);
+  } catch {}
+  handle.addEventListener('pointerdown', (e) => {
+    handle.setPointerCapture(e.pointerId);
+    split.classList.add('dragging');
+    handle.classList.add('drag');
+  });
+  handle.addEventListener('pointermove', (e) => {
+    if (!handle.hasPointerCapture(e.pointerId)) return;
+    const w = `${Math.max(320, Math.min(window.innerWidth - 400, window.innerWidth - e.clientX))}px`;
+    split.style.setProperty('--panel-w', w);
+  });
+  handle.addEventListener('pointerup', (e) => {
+    handle.releasePointerCapture(e.pointerId);
+    split.classList.remove('dragging');
+    handle.classList.remove('drag');
+    try { localStorage.setItem('rh-web:panel-w', split.style.getPropertyValue('--panel-w')); } catch {}
+  });
+
+}
 
 const q = new URLSearchParams(location.search);
-history.replaceState(null, '', '/');
+history.replaceState(null, '', location.pathname);
 panel.src = '/extension/sidepanel/panel.html';
 
 if (q.get('add')) {

@@ -2,3 +2,7 @@ node_modules/
 extension/vendor/
 .cache/
 *.log
+
+# iOS build output
+ios/*.xcodeproj/
+ios/build/

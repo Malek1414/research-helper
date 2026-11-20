@@ -1,5 +1,7 @@
 // Client for the local bridge (bridge/server.mjs).
-export const BRIDGE = 'http://127.0.0.1:4317';
+// The extension talks to the local bridge; the web app (also on a phone over
+// Wi-Fi) talks to whichever server served it.
+export const BRIDGE = globalThis.chrome?.runtime?.id || !/^https?:$/.test(location.protocol) ? 'http://127.0.0.1:4317' : location.origin;
 export const START_CMD = 'cd ~/Desktop/research-helper && npm run bridge';
 
 async function call(path, body) {

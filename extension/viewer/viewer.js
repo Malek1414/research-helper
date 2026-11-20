@@ -155,7 +155,11 @@ function fillChapterSelect() {
 // ---------- rendering ----------
 function fitScale(page) {
   const vp = page.getViewport({ scale: 1 });
-  const avail = $('main').clientWidth - GUTTER - 96;
+  const w = $('main').clientWidth;
+  // Phones: the page fills the screen and the note margin sits to its right
+  // (swipe left to read the notes).
+  if (w < 700) return ((w - 16) / vp.width) * state.zoom;
+  const avail = w - GUTTER - 96;
   return Math.max(0.5, Math.min(avail / vp.width, 2)) * state.zoom;
 }
 

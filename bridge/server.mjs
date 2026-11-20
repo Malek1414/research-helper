@@ -1,5 +1,8 @@
 // Local bridge between the extension and Claude Code. Listens on 127.0.0.1 only
 // and only answers the extension (chrome-extension:// origins) or local tools.
+// With --lan (npm run mobile) it also listens on the Wi-Fi network for the iPhone
+// app; every request from another device then needs the pairing token
+// (GET /pair?t=<token> sets it as a cookie).
 //   GET  /          -> localhost web app (web/index.html, serves extension/ files)
 //   GET  /fetch?url= -> a PDF downloaded for the web app
 //   GET  /health   -> {ok, model}
@@ -12,8 +15,9 @@
 //   POST /ask      -> {answer}
 //   POST /export   -> {file, glossary}
 import { createServer as createHttpServer } from 'node:http';
-import { createHash } from 'node:crypto';
+import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import { lookup } from 'node:dns/promises';
+import { hostname, networkInterfaces } from 'node:os';
 import { isIP } from 'node:net';
 import { mkdirSync, readFileSync, writeFileSync, existsSync, statSync } from 'node:fs';
 import { dirname, extname, join, resolve, sep } from 'node:path';
@@ -78,6 +82,7 @@ export function createBridge({
   model = process.env.RH_MODEL || 'sonnet',
   log = (...a) => console.log(new Date().toISOString().slice(11, 19), ...a),
   allowPrivateFetch = false, // tests only
+  lanToken = null, // set: other devices on the network may connect with this token
 } = {}) {
   mkdirSync(cacheDir, { recursive: true });
   const inflight = new Map();
@@ -303,6 +308,20 @@ export function createBridge({
   const server = createHttpServer(async (req, res) => {
     const port = server.address().port;
     const own = [`127.0.0.1:${port}`, `localhost:${port}`];
+    const remote = !isLoopback(req.socket.remoteAddress);
+    if (remote && process.env.RH_DEBUG) log(`lan ${req.method} ${req.url.replace(/t=[^&]+/, 't=…')}`);
+    if (remote) {
+      // Another device (the iPhone app): only in LAN mode and only with the token.
+      if (!lanToken) return void res.writeHead(403).end();
+      const url = new URL(req.url, 'http://x');
+      if (req.method === 'GET' && url.pathname === '/pair') {
+        if (!sameToken(url.searchParams.get('t'), lanToken)) return void res.writeHead(401).end('wrong pairing code');
+        res.writeHead(302, { 'set-cookie': `rh_t=${lanToken}; Path=/; HttpOnly; SameSite=Strict; Max-Age=31536000`, location: url.searchParams.get('next') === 'mobile' ? '/m' : '/' }).end();
+        return;
+      }
+      if (!sameToken(cookie(req, 'rh_t'), lanToken)) return void res.writeHead(401, { 'content-type': 'text/plain' }).end('Not paired. Open the Research Helper app and pair it with this Mac.');
+      own.push(req.headers.host);
+    }
     // Host check stops DNS-rebinding pages; origin check stops other websites.
     if (!own.includes(req.headers.host)) {
       res.writeHead(403).end();
@@ -409,7 +428,7 @@ export function createBridge({
 
   // The localhost web app: / is web/index.html; /web/* and /extension/* are files.
   function serveStatic(pathname, res) {
-    const rel = pathname === '/' ? 'web/index.html' : decodeURIComponent(pathname).replace(/^\/+/, '');
+    const rel = pathname === '/' ? 'web/index.html' : pathname === '/m' ? 'web/mobile.html' : decodeURIComponent(pathname).replace(/^\/+/, '');
     if (!/^(web|extension)\//.test(rel)) return false;
     const file = resolve(ROOT, rel);
     if (!file.startsWith(join(ROOT, rel.split('/')[0]) + sep) || !existsSync(file) || !statSync(file).isFile()) return false;
@@ -421,8 +440,47 @@ export function createBridge({
   return server;
 }
 
+const isLoopback = (a = '') => a === '::1' || a.replace(/^::ffff:/, '').startsWith('127.');
+
+function sameToken(a, b) {
+  if (typeof a !== 'string' || !a) return false;
+  const x = Buffer.from(a);
+  const y = Buffer.from(b);
+  return x.length === y.length && timingSafeEqual(x, y);
+}
+
+function cookie(req, name) {
+  for (const part of (req.headers.cookie || '').split(';')) {
+    const [k, ...v] = part.trim().split('=');
+    if (k === name) return v.join('=');
+  }
+  return null;
+}
+
+// The pairing token for the iPhone app, kept in .cache so pairing survives restarts.
+export function mobileToken(file = join(ROOT, '.cache', 'mobile-token')) {
+  if (existsSync(file)) return readFileSync(file, 'utf8').trim();
+  mkdirSync(dirname(file), { recursive: true });
+  const t = randomBytes(18).toString('base64url');
+  writeFileSync(file, t, { mode: 0o600 });
+  return t;
+}
+
+export function lanAddress() {
+  for (const list of Object.values(networkInterfaces())) {
+    for (const i of list || []) if (i.family === 'IPv4' && !i.internal && isPrivateAddress(i.address)) return i.address;
+  }
+  return null;
+}
+
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
-  createBridge().listen(PORT, '127.0.0.1', () => {
+  const lan = process.argv.includes('--lan') || process.env.RH_LAN === '1';
+  const token = lan ? mobileToken() : null;
+  createBridge({ lanToken: token }).listen(PORT, lan ? '0.0.0.0' : '127.0.0.1', () => {
     console.log(`Research Helper on http://127.0.0.1:${PORT}  (web app + bridge for the extension, model: ${process.env.RH_MODEL || 'sonnet'})`);
+    if (lan) {
+      const host = `${hostname().replace(/\.local$/, '')}.local`;
+      console.log(`iPhone: open the Research Helper app. Pairing link: http://${lanAddress() || host}:${PORT}/pair?t=${token}&next=mobile`);
+    }
   });
 }
